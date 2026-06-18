@@ -1,0 +1,15 @@
+[Unit]
+Description=Garmin Backup Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/evg/garmin-analysis-and-backup
+Environment=PYTHONPATH=/home/evg/garmin-analysis-and-backup/src
+EnvironmentFile=/home/evg/garmin-analysis-and-backup/.env
+ExecStart=/home/evg/garmin-analysis-and-backup/.venv/bin/python -m garmin_backup_bot.main
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

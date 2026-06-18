@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "garmin-analysis-and-backup"
+version = "0.1.0"
+description = "Telegram personal health assistant powered by Garmin data and Claude AI"
+requires-python = ">=3.10"
+dependencies = [
+  "python-telegram-bot==21.10",
+  "cryptography==44.0.0",
+  "python-dotenv==1.0.1",
+  "GarminDB==3.6.7",
+  "fastapi==0.115.6",
+  "uvicorn==0.34.0",
+  "anthropic>=0.40.0",
+  "openai>=1.30.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+garmin-backup-bot = "garmin_backup_bot.main:main"

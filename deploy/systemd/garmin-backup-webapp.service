@@ -1,0 +1,15 @@
+[Unit]
+Description=Garmin Backup WebApp (FastAPI)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/evg/garmin-analysis-and-backup
+Environment=PYTHONPATH=/home/evg/garmin-analysis-and-backup/src
+EnvironmentFile=/home/evg/garmin-analysis-and-backup/.env
+ExecStart=/home/evg/garmin-analysis-and-backup/.venv/bin/uvicorn garmin_backup_bot.webapp:app --host 0.0.0.0 --port 8085 --app-dir /home/evg/garmin-analysis-and-backup/src
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
