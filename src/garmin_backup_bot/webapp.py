@@ -70,11 +70,11 @@ def connect(request: Request, token: str = Query(..., min_length=8, max_length=1
     _check_rate(request)
     safe_token = html.escape(token, quote=True)
     return f"""<!doctype html>
-<html lang=\"en\">
+<html lang=\"ru\">
 <head>
   <meta charset=\"utf-8\" />
   <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\" />
-  <title>Connect Garmin</title>
+  <title>Подключить Garmin</title>
   <style>
     :root {{
       --bg: #f7f4ee;
@@ -141,18 +141,18 @@ def connect(request: Request, token: str = Query(..., min_length=8, max_length=1
 </head>
 <body>
   <main class=\"card\">
-    <h1>Garmin Connect</h1>
-    <p>Данные уйдут в бота и сохранятся на сервере в зашифрованном виде.</p>
+    <h1>Подключить Garmin Connect</h1>
+    <p>Логин и пароль уйдут в бота и сохранятся на сервере в зашифрованном виде. Никто другой не получит к ним доступ.</p>
 
     <form id=\"garmin-form\">
       <input id=\"token\" name=\"token\" type=\"hidden\" value=\"{safe_token}\" />
-      <label for=\"username\">Username / Email</label>
+      <label for=\"username\">Логин или email</label>
       <input id=\"username\" name=\"username\" autocomplete=\"username\" required />
 
-      <label for=\"password\">Password</label>
+      <label for=\"password\">Пароль</label>
       <input id=\"password\" name=\"password\" type=\"password\" autocomplete=\"current-password\" required />
 
-      <button type=\"submit\">Save Securely</button>
+      <button type=\"submit\">Сохранить</button>
       <div id=\"status\" class=\"status\"></div>
     </form>
   </main>
@@ -169,11 +169,11 @@ def connect(request: Request, token: str = Query(..., min_length=8, max_length=1
     const password = document.getElementById('password').value;
 
     if (!username || !password) {{
-      statusEl.textContent = 'Fill all fields.';
+      statusEl.textContent = 'Заполни оба поля.';
       return;
     }}
 
-    statusEl.textContent = 'Saving...';
+    statusEl.textContent = 'Сохраняю…';
     try {{
       const resp = await fetch('submit', {{
         method: 'POST',
@@ -182,12 +182,12 @@ def connect(request: Request, token: str = Query(..., min_length=8, max_length=1
       }});
       const data = await resp.json();
       if (!resp.ok || !data.ok) {{
-        statusEl.textContent = data.message || 'Failed to save.';
+        statusEl.textContent = data.message || 'Не получилось сохранить. Попробуй ещё раз.';
         return;
       }}
-      statusEl.textContent = 'Saved. Return to Telegram and run /backup.';
+      statusEl.textContent = '✅ Готово! Вернись в Telegram и нажми кнопку 🌅 Утро — бот загрузит данные за последние дни.';
     }} catch (err) {{
-      statusEl.textContent = 'Network error. Try again.';
+      statusEl.textContent = 'Ошибка сети. Проверь интернет и попробуй ещё раз.';
     }}
   }});
 </script>
@@ -209,10 +209,10 @@ def submit(payload: SubmitPayload, request: Request) -> dict[str, object]:
     username = payload.username.strip()
     password = payload.password
     if not token or not username or not password:
-        return {"ok": False, "message": "Missing fields"}
+        return {"ok": False, "message": "Не все поля заполнены."}
     user_id = _storage.consume_web_token(token)
     if not user_id:
-        return {"ok": False, "message": "Token expired or invalid. Re-run /link_garmin."}
+        return {"ok": False, "message": "Ссылка устарела. Запусти /link_garmin в боте ещё раз."}
     encrypted = _box.encrypt(password)
     _storage.upsert_credentials(user_id=user_id, username=username, password_encrypted=encrypted)
-    return {"ok": True, "message": "Saved"}
+    return {"ok": True, "message": "Сохранено"}

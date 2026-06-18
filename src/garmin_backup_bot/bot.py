@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import (
+    BotCommand,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
@@ -30,9 +31,9 @@ from .transcription import Transcriber
 logger = logging.getLogger(__name__)
 
 BTN_MORNING = "🌅 Утро"
-BTN_WORKOUT = "🏃 Тренировка"
+BTN_WORKOUT = "🏃 Разбор пробежки"
 BTN_PLAN = "📅 План"
-BTN_SPORT = "🏅 Спорт статус"
+BTN_SPORT = "🏅 Форма за 4 недели"
 BTN_GOAL = "🎯 Моя цель"
 BTN_MEMORY = "🧠 Заметки"
 BTN_STATUS = "📊 Статус"
@@ -42,12 +43,12 @@ BTN_PROGRESS = "📈 Прогресс"
 BTN_WEEKLY = "📋 Итог недели"
 BTN_RECORDS = "🏆 Рекорды"
 BTN_WEIGHT = "⚖️ Вес"
-BTN_LTHR = "💓 LTHR"
+BTN_LTHR = "💓 LTHR (порог)"
 BTN_TIMEZONE = "🕐 Часовой пояс"
 BTN_EXPERIENCE = "🏃 Стаж"
 BTN_PROFILE = "📋 Профиль"
-BTN_FOOD = "🍽 Еда"
-BTN_FOOD_REPORT = "📊 Питание"
+BTN_FOOD = "🍽 Записать еду"
+BTN_FOOD_REPORT = "📊 Питание за день"
 
 # Profile questionnaire: ordered list of (field_name, question_text, awaiting_key)
 # All questions support "далее" / "-" to skip.
@@ -1066,7 +1067,7 @@ class GarminBot:
         awaiting = context.user_data.get("awaiting")
         if awaiting != "food":
             await update.message.reply_text(
-                "Чтобы записать еду, сначала нажми 🍽 Еда",
+                "Чтобы записать еду, сначала нажми 🍽 Записать еду",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -1252,7 +1253,7 @@ class GarminBot:
             await query.edit_message_text(
                 f"✅ Сохранено{date_note}! (#{entry_id})\n"
                 f"{pending['description']}: {pending['calories']:.0f} ккал\n\n"
-                "Для следующего приёма пищи снова нажми 🍽 Еда."
+                "Для следующего приёма пищи снова нажми 🍽 Записать еду."
             )
             context.user_data.pop("awaiting", None)
             context.user_data.pop("food_date", None)
@@ -1301,7 +1302,7 @@ class GarminBot:
         if not entries:
             await update.message.reply_text(
                 f"Сегодня ({today.strftime('%d.%m')}) нет записей о еде.\n"
-                "Нажми 🍽 Еда чтобы начать записывать.",
+                "Нажми 🍽 Записать еду чтобы начать записывать.",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -1754,49 +1755,58 @@ class GarminBot:
             "Финализирую расписание",
         ]))
 
-        try:
-            password = self._box.decrypt(creds.password_encrypted)
-            # Sync activities so the plan sees the latest workouts
-            try:
-                async with self._global_sync_sem:
-                    await asyncio.to_thread(
-                        self._service.run_activity_sync,
-                        user_id=user_id,
-                        username=creds.username,
-                        password=password,
-                    )
-            except Exception as exc:
-                logger.warning("Activity sync before plan failed (using cached data): %s", exc)
-            yesterday = today - timedelta(days=1)
-            metrics = self._get_metrics(user_id, today)
+        lock = self._get_sync_lock(user_id)
+        if lock.locked():
+            stop.set()
+            with contextlib.suppress(Exception):
+                await spinner
+            await status_msg.edit_text("Уже идёт синхронизация, подожди немного…")
+            return
 
-            history = self._storage.get_history(user_id, limit=10)
-            user_memory = self._storage.get_user_memory(user_id)
-            training_goal = self._storage.get_goal(user_id)
-            upcoming_races = self._storage.get_races(user_id, from_date=today.isoformat())
-            # Also fetch recent past races for post-race recovery detection
-            past_races_since = (today - timedelta(days=21)).isoformat()
-            all_recent_races = self._storage.get_races(user_id, from_date=past_races_since)
-            past_races = [r for r in all_recent_races if r["date"] < today.isoformat()]
-            # Get recent feelings for safety checks in determine_week_type
-            from datetime import date as _date
-            feelings_since = (_date.today() - timedelta(days=6)).isoformat()
-            recent_feelings = self._storage.get_feelings(user_id, feelings_since)
-            # Pass previous plan for continuity (even if stale — LLM sees what was planned)
-            prev_plan_row = self._storage.get_plan(user_id, week_start)
-            prev_plan = prev_plan_row[0] if prev_plan_row else ""
-            plan_text, week_type = await self._plan_builder.generate_plan(
-                user_id=user_id,
-                metrics=metrics or {"date": today.isoformat()},
-                history=history,
-                user_memory=user_memory,
-                training_goal=training_goal,
-                upcoming_races=upcoming_races,
-                feelings=recent_feelings,
-                previous_plan=prev_plan,
-                past_races=past_races,
-            )
-            self._storage.save_plan(user_id, week_start, plan_text, week_type)
+        try:
+            async with lock:
+                password = self._box.decrypt(creds.password_encrypted)
+                # Sync activities so the plan sees the latest workouts
+                try:
+                    async with self._global_sync_sem:
+                        await asyncio.to_thread(
+                            self._service.run_activity_sync,
+                            user_id=user_id,
+                            username=creds.username,
+                            password=password,
+                        )
+                except Exception as exc:
+                    logger.warning("Activity sync before plan failed (using cached data): %s", exc)
+                yesterday = today - timedelta(days=1)
+                metrics = self._get_metrics(user_id, today)
+
+                history = self._storage.get_history(user_id, limit=10)
+                user_memory = self._storage.get_user_memory(user_id)
+                training_goal = self._storage.get_goal(user_id)
+                upcoming_races = self._storage.get_races(user_id, from_date=today.isoformat())
+                # Also fetch recent past races for post-race recovery detection
+                past_races_since = (today - timedelta(days=21)).isoformat()
+                all_recent_races = self._storage.get_races(user_id, from_date=past_races_since)
+                past_races = [r for r in all_recent_races if r["date"] < today.isoformat()]
+                # Get recent feelings for safety checks in determine_week_type
+                from datetime import date as _date
+                feelings_since = (_date.today() - timedelta(days=6)).isoformat()
+                recent_feelings = self._storage.get_feelings(user_id, feelings_since)
+                # Pass previous plan for continuity (even if stale — LLM sees what was planned)
+                prev_plan_row = self._storage.get_plan(user_id, week_start)
+                prev_plan = prev_plan_row[0] if prev_plan_row else ""
+                plan_text, week_type = await self._plan_builder.generate_plan(
+                    user_id=user_id,
+                    metrics=metrics or {"date": today.isoformat()},
+                    history=history,
+                    user_memory=user_memory,
+                    training_goal=training_goal,
+                    upcoming_races=upcoming_races,
+                    feelings=recent_feelings,
+                    previous_plan=prev_plan,
+                    past_races=past_races,
+                )
+                self._storage.save_plan(user_id, week_start, plan_text, week_type)
         except Exception as exc:
             logger.exception("Error generating plan")
             plan_text = _api_error_msg(exc, "составление плана")
@@ -2469,7 +2479,7 @@ class GarminBot:
             await update.message.reply_text(text, reply_markup=FOOD_CONFIRM_KB)
             return
 
-        # Edit an existing saved food entry (from 📊 Питание management list)
+        # Edit an existing saved food entry (from 📊 Питание за день management list)
         if awaiting == "food_db_edit" and self._nutrition:
             from datetime import date as _date
 
@@ -2477,7 +2487,7 @@ class GarminBot:
             old_date = context.user_data.pop("food_db_edit_date", None)
             if entry_id is None:
                 await update.message.reply_text(
-                    "Не нашёл, какую запись править. Открой 📊 Питание заново.",
+                    "Не нашёл, какую запись править. Открой 📊 Питание за день заново.",
                     reply_markup=MAIN_KEYBOARD,
                 )
                 return
@@ -2548,7 +2558,7 @@ class GarminBot:
                 f"🔥 {fresh['calories']:.0f} ккал | "
                 f"Б {fresh['protein_g']:.0f}г Ж {fresh['fat_g']:.0f}г "
                 f"У {fresh['carbs_g']:.0f}г\n\n"
-                "Открой 📊 Питание, чтобы увидеть обновлённый список.",
+                "Открой 📊 Питание за день, чтобы увидеть обновлённый список.",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -2921,6 +2931,28 @@ class GarminBot:
         return f"{value}% (cohort={cohort_size})"
 
 
+_BOT_COMMANDS = [
+    BotCommand("start", "С чего начать"),
+    BotCommand("link_garmin", "Подключить Garmin"),
+    BotCommand("plan", "Недельный план"),
+    BotCommand("goal", "Поставить цель"),
+    BotCommand("race", "Гонки и старты"),
+    BotCommand("feeling", "Записать самочувствие"),
+    BotCommand("status", "Статус подключения"),
+    BotCommand("remember", "Запомнить заметку"),
+    BotCommand("memory", "Показать заметки"),
+    BotCommand("forget", "Удалить заметку"),
+    BotCommand("profile_reset", "Сбросить профиль"),
+]
+
+
+async def _set_bot_commands(app: Application) -> None:
+    try:
+        await app.bot.set_my_commands(_BOT_COMMANDS)
+    except Exception as exc:
+        logger.warning("set_my_commands failed: %s", exc)
+
+
 def build_application(
     token: str,
     storage: Storage,
@@ -2936,7 +2968,13 @@ def build_application(
     nutrition: NutritionAnalyzer | None = None,
     transcriber: Transcriber | None = None,
 ) -> Application:
-    app = Application.builder().token(token).concurrent_updates(True).build()
+    app = (
+        Application.builder()
+        .token(token)
+        .concurrent_updates(True)
+        .post_init(_set_bot_commands)
+        .build()
+    )
     GarminBot(
         app=app,
         storage=storage,
