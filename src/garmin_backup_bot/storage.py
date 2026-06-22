@@ -608,6 +608,18 @@ class Storage:
             ).fetchone()
         return (row[0], row[1]) if row else None
 
+    def get_plan_meta(self, user_id: int, week_start: str) -> dict | None:
+        """Возвращает {plan_text, week_type, generated_at} или None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT plan_text, week_type, generated_at "
+                "FROM weekly_plans WHERE user_id = ? AND week_start = ?",
+                (user_id, week_start),
+            ).fetchone()
+        if not row:
+            return None
+        return {"plan_text": row[0], "week_type": row[1], "generated_at": row[2]}
+
     def save_plan(self, user_id: int, week_start: str, plan_text: str, week_type: str) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:

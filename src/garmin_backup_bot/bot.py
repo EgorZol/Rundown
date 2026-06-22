@@ -1720,6 +1720,21 @@ class GarminBot:
                     sync_exc = exc
                     logger.warning("Health sync error (will use cached data): %s", exc)
 
+                # Подтягиваем и активности тоже: после garth-миграции это
+                # быстрая I/O-операция (5-10 сек). Без этого утренний бриф
+                # говорит «пробежек не было», если вчерашняя пробёжка ещё
+                # не подтянулась до morning (см. жалобу Алины #7).
+                try:
+                    async with self._global_sync_sem:
+                        await asyncio.to_thread(
+                            self._service.run_activity_sync,
+                            user_id=user_id,
+                            username=creds.username,
+                            password=password,
+                        )
+                except Exception as exc:
+                    logger.warning("Activity sync error in morning (using cached): %s", exc)
+
                 today = datetime.now(self._get_user_tz(user_id)).date()
                 yesterday = today - timedelta(days=1)
                 metrics = self._get_metrics(user_id, today)
@@ -1897,8 +1912,9 @@ class GarminBot:
             user_memory = self._storage.get_user_memory(user_id)
             # Include current week's plan for comparison (if exists)
             week_start = (today - timedelta(days=today.weekday())).isoformat()
-            cached_plan_row = self._storage.get_plan(user_id, week_start)
-            cached_plan = cached_plan_row[0] if cached_plan_row else None
+            cached_plan_meta = self._storage.get_plan_meta(user_id, week_start)
+            cached_plan = cached_plan_meta["plan_text"] if cached_plan_meta else None
+            cached_week_type = cached_plan_meta["week_type"] if cached_plan_meta else ""
             # Узкая история: только прошлые workout/qa, лимит 6 — этого хватает
             # на «вчера я говорил, что устал», без раздутия до 17k токенов.
             workout_history = self._storage.get_history(
@@ -1907,6 +1923,7 @@ class GarminBot:
             analysis = await self._analyst.analyze_workout(
                 activities, daily_metrics, history=workout_history,
                 user_memory=user_memory, plan_text=cached_plan,
+                week_type=cached_week_type,
             )
         finally:
             stop.set()
@@ -2126,9 +2143,18 @@ class GarminBot:
             if not metrics:
                 metrics = {"date": today.isoformat()}
 
-            # Cached plan for comparison — auto-generate if missing
-            week_start_date = today - timedelta(days=today.weekday())
+            # Окно недели:
+            # • Пн → ушедшая неделя Пн-Вс (юзер ждёт «итог завершившейся недели»)
+            # • Иначе → текущая Пн → сегодня
+            if today.weekday() == 0:
+                week_start_date = today - timedelta(days=7)
+                week_end_date = today - timedelta(days=1)
+            else:
+                week_start_date = today - timedelta(days=today.weekday())
+                week_end_date = today
             week_start = week_start_date.isoformat()
+            week_end_iso = week_end_date.isoformat()
+            # План для сравнения берём по понедельнику ИМЕННО этой недели (а не «текущей»)
             plan_row = self._storage.get_plan(user_id, week_start)
             plan_text = plan_row[0] if plan_row else ""
 
@@ -2159,11 +2185,10 @@ class GarminBot:
             user_memory = self._storage.get_user_memory(user_id)
 
             # Collect food entries for the week
-            from datetime import date as _date
             week_food: list[dict] = []
             for i in range(7):
                 day = week_start_date + timedelta(days=i)
-                if day > today:
+                if day > week_end_date:
                     break
                 day_entries = self._storage.get_food_entries(user_id, day.isoformat())
                 week_food.extend(day_entries)
@@ -2172,11 +2197,20 @@ class GarminBot:
             garmin_week_cal: dict[str, dict] = {}
             for i in range(7):
                 day = week_start_date + timedelta(days=i)
-                if day > today:
+                if day > week_end_date:
                     break
                 dc = self._get_garmin_daily_calories(user_id, day)
                 if dc:
                     garmin_week_cal[day.isoformat()] = dc
+
+            # Активности окна (с понедельника недели). collect_recent_activities
+            # тянет от date.today()−days, поэтому глубину берём с запасом.
+            days_back = (today - week_start_date).days + 2
+            all_recent = self._service.collect_recent_activities(user_id, days=days_back)
+            week_activities = [
+                a for a in all_recent
+                if week_start <= (a.get("start_time") or "")[:10] <= week_end_iso
+            ]
 
             weight_kg = self._get_user_weight(user_id)
 
@@ -2188,6 +2222,7 @@ class GarminBot:
                 food_entries=week_food,
                 garmin_daily_calories=garmin_week_cal,
                 weight_kg=weight_kg,
+                week_activities=week_activities,
             )
         except Exception as exc:
             logger.exception("Error generating weekly summary")
@@ -2867,8 +2902,9 @@ class GarminBot:
         past_horizon = (today - timedelta(days=21)).isoformat()
         upcoming_races = self._storage.get_races(user_id, from_date=past_horizon)
         week_start = (today - timedelta(days=today.weekday())).isoformat()
-        current_plan_row = self._storage.get_plan(user_id, week_start)
-        current_plan = current_plan_row[0] if current_plan_row else ""
+        plan_meta = self._storage.get_plan_meta(user_id, week_start)
+        current_plan = plan_meta["plan_text"] if plan_meta else ""
+        current_week_type = plan_meta["week_type"] if plan_meta else ""
         # Pass DB paths so Claude can query them directly via tool use
         db_paths = self._service.get_db_paths(user_id)
         db_paths["app"] = str(self._storage._db_path)
@@ -2886,7 +2922,7 @@ class GarminBot:
             answer = await self._analyst.ask(
                 question, metrics, history=history, user_memory=user_memory,
                 upcoming_races=upcoming_races, training_goal=training_goal,
-                current_plan=current_plan, db_paths=db_paths,
+                current_plan=current_plan, current_week_type=current_week_type, db_paths=db_paths,
                 user_id=user_id, today_iso=today.isoformat(),
                 save_plan_fn=_save_plan_fn,
             )
