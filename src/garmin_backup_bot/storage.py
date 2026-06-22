@@ -478,6 +478,7 @@ class Storage:
         user_id: int,
         limit: int = 20,
         sources: list[str] | tuple[str, ...] | str | None = None,
+        max_chars_per_msg: int = 1200,
     ) -> list[dict]:
         """Return the last `limit` messages as [{'role': ..., 'content': ...}].
 
@@ -485,6 +486,11 @@ class Storage:
           • None — все сообщения
           • str  — один источник (обратная совместимость)
           • list/tuple — несколько источников (e.g. ('morning','qa'))
+
+        `max_chars_per_msg` — соft-cap на длину каждого сообщения при чтении.
+        Длинные ассистент-сообщения (планы, разборы тренировок) обрезаются
+        с пометкой «[…сокращено]», чтобы они не раздували каждый последующий
+        LLM-вызов. Полный текст в БД сохраняется как есть.
         """
         if isinstance(sources, str):
             sources = (sources,)
@@ -514,7 +520,13 @@ class Storage:
                     """,
                     (user_id, *sources, limit),
                 ).fetchall()
-        return [{"role": row[0], "content": row[1]} for row in rows]
+        out: list[dict] = []
+        for role, content in rows:
+            if max_chars_per_msg and len(content) > max_chars_per_msg:
+                # Берём начало (это обычно суть/вердикт), хвост обрезаем.
+                content = content[:max_chars_per_msg].rstrip() + " […сокращено]"
+            out.append({"role": role, "content": content})
+        return out
 
     # ---------- user memory: per-item модель ----------
 
