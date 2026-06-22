@@ -6,7 +6,7 @@ import json
 import logging
 import re
 import time
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from telegram import (
@@ -140,6 +140,66 @@ _BAD_MEMORY_PATTERNS: list[tuple[str, str]] = [
     (r"(?i)\bвес\s*[:=]?\s*\d{2,3}(?:[.,]\d)?\s*кг", "вес — используй кнопку ⚖ Вес"),
     (r"(?i)\bчасовой\s+пояс\b", "часовой пояс — команда /tz"),
 ]
+
+
+def _parse_expiry(text: str, today: date | None = None) -> str | None:
+    """Парсит срок жизни заметки. Возвращает ISO-дату или None.
+
+    Принимает:
+      • ISO  — 2026-07-05
+      • DD.MM[.YYYY] / DD-MM[-YYYY] / DD/MM[/YYYY]
+      • относительные: «завтра», «послезавтра», «через N дней/дн.»,
+        «через N недель/нед.», «через месяц»
+    """
+    if not text:
+        return None
+    today = today or date.today()
+    s = text.strip().lower()
+    # ISO
+    m = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", s)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3))).isoformat()
+        except ValueError:
+            return None
+    # DD.MM[.YYYY] (а также с / и -)
+    m = re.fullmatch(r"(\d{1,2})[.\-/](\d{1,2})(?:[.\-/](\d{2,4}))?", s)
+    if m:
+        d, mon = int(m.group(1)), int(m.group(2))
+        year_part = m.group(3)
+        if year_part:
+            year = int(year_part)
+            if year < 100:
+                year += 2000
+        else:
+            year = today.year
+            # если дата уже в прошлом — берём следующий год
+            try:
+                candidate = date(year, mon, d)
+                if candidate < today:
+                    year += 1
+            except ValueError:
+                return None
+        try:
+            return date(year, mon, d).isoformat()
+        except ValueError:
+            return None
+    if s in ("завтра",):
+        return (today + timedelta(days=1)).isoformat()
+    if s in ("послезавтра",):
+        return (today + timedelta(days=2)).isoformat()
+    m = re.fullmatch(r"через\s+(\d+)\s*(дн|день|дня|дней|нед|недел[ьюяи]+|месяц[аев]*)", s)
+    if m:
+        n = int(m.group(1))
+        unit = m.group(2)
+        if unit.startswith("нед"):
+            return (today + timedelta(weeks=n)).isoformat()
+        if unit.startswith("месяц"):
+            return (today + timedelta(days=30 * n)).isoformat()
+        return (today + timedelta(days=n)).isoformat()
+    if s in ("через месяц",):
+        return (today + timedelta(days=30)).isoformat()
+    return None
 
 
 def _classify_bad_memory(note: str) -> str | None:
@@ -546,17 +606,39 @@ class GarminBot:
         await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
 
     async def remember(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Save persistent notes that Claude always sees. Usage: /remember <text>"""
+        """Save persistent notes that Claude always sees.
+
+        Usage:
+          /remember <text>
+          /remember --until 2026-07-05 <text>   ← с датой истечения
+          /remember --until 05.07 <text>
+          /remember --until завтра <text>
+        """
         user_id = update.effective_user.id
-        note = " ".join(context.args or []).strip()
+        args = list(context.args or [])
+        expires_at: str | None = None
+        if args and args[0].lower() == "--until" and len(args) >= 2:
+            raw_date = args[1]
+            parsed = _parse_expiry(raw_date)
+            if not parsed:
+                await update.message.reply_text(
+                    f"Не понял дату «{raw_date}». Примеры: 2026-07-05, 05.07, завтра, через 14 дней",
+                    reply_markup=MAIN_KEYBOARD,
+                )
+                return
+            expires_at = parsed
+            args = args[2:]
+        note = " ".join(args).strip()
         if not note:
             await update.message.reply_text(
-                "Использование: /remember <заметка>\n\n"
-                "Пример:\n"
+                "Использование: /remember <заметка>\n"
+                "                /remember --until <дата> <заметка>\n\n"
+                "Примеры:\n"
                 "/remember Не переношу жару\n"
-                "/remember Бегаю утром, не вечером\n\n"
-                "⚠️ Цели и гонки — через /goal и /race, не через /remember "
-                "(иначе бот будет видеть две разные цели).",
+                "/remember Бегаю утром, не вечером\n"
+                "/remember --until 2026-07-05 Курс антибиотиков — без Z4/Z5\n"
+                "/remember --until через 14 дней Восстанавливаю колено\n\n"
+                "⚠️ Цели и гонки — через /goal и /race.",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -567,13 +649,14 @@ class GarminBot:
                 reply_markup=MAIN_KEYBOARD,
             )
             return
-        new_id = self._storage.add_memory_item(user_id, note)
+        new_id = self._storage.add_memory_item(user_id, note, expires_at=expires_at)
         if new_id is None:
             await update.message.reply_text(
                 "Уже есть похожая заметка — не дублирую.", reply_markup=MAIN_KEYBOARD
             )
             return
-        await self._show_memory_list(update, user_id, header=f"Запомнил (#{new_id}).")
+        suffix = f" (до {expires_at})" if expires_at else ""
+        await self._show_memory_list(update, user_id, header=f"Запомнил (#{new_id}){suffix}.")
 
     async def show_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show current persistent memory as a numbered list."""
@@ -2827,14 +2910,15 @@ class GarminBot:
         # (для них есть структурные команды; не давать им жить в user_memory).
         saved_memories: list[str] = []
         rejected: list[tuple[str, str]] = []
-        for mem in memories:
-            reason = _classify_bad_memory(mem)
+        for mem_text, mem_expiry in memories:
+            reason = _classify_bad_memory(mem_text)
             if reason:
-                rejected.append((mem, reason))
+                rejected.append((mem_text, reason))
                 continue
-            new_id = self._storage.add_memory_item(user_id, mem)
+            new_id = self._storage.add_memory_item(user_id, mem_text, expires_at=mem_expiry)
             if new_id is not None:
-                saved_memories.append(mem)
+                suffix = f" (до {mem_expiry})" if mem_expiry else ""
+                saved_memories.append(f"{mem_text}{suffix}")
         if saved_memories:
             await update.message.reply_text(
                 f"💾 Запомнил: {'; '.join(saved_memories)}",
@@ -3020,14 +3104,24 @@ class GarminBot:
         self._storage.add_message(user_id, "assistant", plan_text, source="plan_tweak")
 
     @staticmethod
-    def _extract_memories(text: str) -> tuple[str, list[str]]:
-        """Extract [ЗАПОМНИТЬ: ...] tags from AI response. Return (clean_text, memories)."""
-        memories = []
+    def _extract_memories(text: str) -> tuple[str, list[tuple[str, str | None]]]:
+        """Extract [ЗАПОМНИТЬ[ до DATE]: ...] tags. Return (clean_text, [(content, expires_iso_or_None)…]).
+
+        Поддерживает:
+          [ЗАПОМНИТЬ: текст]                  — бессрочно
+          [ЗАПОМНИТЬ до 2026-07-05: текст]    — ISO
+          [ЗАПОМНИТЬ до 05.07: текст]         — DD.MM (год авто)
+          [ЗАПОМНИТЬ до завтра: текст]        — relative
+        """
+        memories: list[tuple[str, str | None]] = []
         clean = text
-        for m in re.finditer(r'\[ЗАПОМНИТЬ:\s*(.+?)\]', text):
-            memories.append(m.group(1).strip())
+        pattern = re.compile(r'\[ЗАПОМНИТЬ(?:\s+до\s+([^\]:]+?))?:\s*(.+?)\]')
+        for m in pattern.finditer(text):
+            raw_expiry = (m.group(1) or "").strip()
+            content = m.group(2).strip()
+            expires_at = _parse_expiry(raw_expiry) if raw_expiry else None
+            memories.append((content, expires_at))
             clean = clean.replace(m.group(0), "")
-        # Clean up trailing whitespace/newlines left after removal
         clean = re.sub(r'\n{3,}', '\n\n', clean).strip()
         return clean, memories
 
