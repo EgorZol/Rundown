@@ -1374,6 +1374,8 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         user_id: int | None = None,
         today_iso: str | None = None,
         save_plan_fn: Callable[[str, str], str] | None = None,
+        write_tools: dict[str, Callable[..., str]] | None = None,
+        verified_facts: list[dict] | None = None,
     ) -> str:
         fitness_profile = None
         context_block = ""
@@ -1433,6 +1435,11 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         if current_plan:
             wt_label = f" (фаза: {current_week_type})" if current_week_type else ""
             extra_context += f"\nТЕКУЩИЙ ПЛАН НЕДЕЛИ{wt_label}:\n{current_plan}"
+        if verified_facts:
+            facts_lines = ["\n🟢 ПОДТВЕРЖДЁННЫЕ АТЛЕТОМ ФАКТЫ (источник истины, НЕ оспаривай и НЕ пересчитывай):"]
+            for f in verified_facts:
+                facts_lines.append(f"  #{f['id']} {f['fact_date']}: {f['fact_text']}")
+            extra_context += "\n".join(facts_lines)
 
         from datetime import date as _date, timedelta as _td
         _today = today_iso or _date.today().isoformat()
@@ -1454,11 +1461,30 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
             "• query_activities_db — тренировки и их детали (activities, activity_laps, activity_splits, activity_records, steps_activities). Сплиты — activity_laps/splits, НЕ activity_records (это сырые точки).\n"
             "• query_app_db — планы, цели, старты, профиль, питание (таблицы: weekly_plans, races, training_goal, user_profile_overrides, food_entries). ВНИМАНИЕ: таблица называется training_goal (единственное число), НЕ training_goals\n"
             "  food_entries: user_id, entry_date, entry_time, description, calories, protein_g, fat_g, carbs_g, confidence, source, raw_response — записи о приёмах еды по дням\n\n"
-            "ИНСТРУМЕНТ (ЗАПИСЬ — единственный!):\n"
-            "• save_weekly_plan(plan_text, week_type) — сохраняет план НА ТЕКУЩУЮ неделю в weekly_plans. "
-            "Вызывай ТОЛЬКО когда юзер явно просит «сохрани/запиши/зафиксируй/запомни» план, который мы согласовали в этом диалоге. "
-            "Сначала пришли полный текст плана юзеру, дождись «ок/да/сохрани», ПОТОМ вызови tool. "
-            "После успешного вызова в ответ юзеру скажи «✅ План сохранён в базу на неделю <даты>», без всяких «✅ запомнил».\n\n"
+            "ИНСТРУМЕНТЫ ЗАПИСИ — ВЫЗЫВАЙ САМ, БЕЗ КОМАНД ОТ ЮЗЕРА:\n"
+            "Пользователь общается обычным текстом. Команд знать НЕ должен. "
+            "Распознавай намерение и вызывай нужный tool. Доступны:\n\n"
+            "• confirm_fact(fact_date, fact_text) — юзер УТВЕРЖДАЕТ/ПОПРАВЛЯЕТ конкретный факт за дату.\n"
+            "  Триггеры: «это правильно», «верно», «нет, было X», «вчера было Y», «итого недели N км».\n"
+            "  Пример: юзер «Бери мои данные. Пят 19.06 темповая Z4, темп 5:46, 10.5 км». →\n"
+            "          вызови confirm_fact(fact_date=\"2026-06-19\", fact_text=\"темповая Z4, темп 5:46, 10.5 км — чёткое выполнение\")\n"
+            "  В тексте ответа подтверди: «Принял: 19.06 — темповая Z4. Буду использовать как факт.»\n\n"
+            "• remember_note(text, expires_at?) — долговременная заметка. Замена тегу [ЗАПОМНИТЬ].\n"
+            "  Травмы, состояния, предпочтения, расписание. Курсы лекарств — обязательно expires_at.\n"
+            "  Если ВРЕМЕННОЕ состояние без срока — сначала спроси «на сколько запомнить?», "
+            "  потом на следующем шаге вызови с expires_at.\n\n"
+            "• forget_note(item_id) — деактивировать заметку. id виден в блоке «Важная информация» в формате «#N. текст».\n"
+            "  Триггеры: «забудь про X», «уже не актуально», «антибиотики допил» (если был курс).\n"
+            "  Найди подходящий #N в текущей памяти и вызови. Если непонятно какую — уточни у юзера.\n\n"
+            "• set_race_result(race_id, actual_time, notes?) — фактический результат прошедшего старта.\n"
+            "  Триггеры: «вчера пробежал 5к за 24:30», «ночной забег 49:52». race_id из блока «НЕДАВНО ПРОБЕЖАЛ».\n"
+            "  Если race_id не находится в контексте — лучше confirm_fact, а не выдумывай.\n\n"
+            "• record_feeling(score, note?) — субъективное самочувствие 1-5.\n"
+            "  Триггеры: «чувствую на 3», «отлично», «плохо», «устала», «полно сил».\n"
+            "  Маппинг: 1=очень плохо, 2=плохо, 3=нормально, 4=хорошо, 5=отлично.\n\n"
+            "• save_weekly_plan(plan_text, week_type) — план на ТЕКУЩУЮ неделю. ТОЛЬКО после явного «сохрани/да».\n\n"
+            "ПОСЛЕ УСПЕШНОГО tool — кратко подтверди в тексте ответа человеческой фразой "
+            "(«Принял», «Запомнил», «Сохранил результат»). НЕ выдумывай подтверждение если tool не вызывал.\n\n"
             "🚫 ПРАВИЛО ЧЕСТНОСТИ — НЕ ВРИ О СОХРАНЕНИИ:\n"
             "У тебя НЕТ инструментов для записи цели, гонок, веса, LTHR, профиля, еды, заметок памяти, "
             "тренировок в БД. Сохранять план — ТОЛЬКО через save_weekly_plan (если он есть в tools).\n"
@@ -1505,6 +1531,13 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
             "• СЧИТАТЬ В УМЕ суммы/средние/проценты больше чем по 3-4 числам — LLM в такой арифметике "
             "ненадёжна. Если в результате SQL нужна агрегация >4 значений (особенно скользящие/cumulative/% от цели) — "
             "сделай ВТОРОЙ SQL-запрос, который посчитает за тебя. Никогда не суммируй в голове 10+ чисел.\n\n"
+            "🟢 ПРИОРИТЕТ ИСТОЧНИКОВ ДАННЫХ:\n"
+            "1. Блок «ПОДТВЕРЖДЁННЫЕ АТЛЕТОМ ФАКТЫ» — это юзер сам утвердил. Используй как ground truth. "
+            "Не противоречь ему даже если в Garmin-БД другое — атлет может знать что Garmin записал криво.\n"
+            "2. SQL по garmin_*.db — объективные данные часов (если фактов нет за эту дату).\n"
+            "3. История чата — для контекста разговора (не для цифр).\n"
+            "Если факт и БД расходятся — упомяни обе цифры одной фразой («атлет: 56 км, Garmin: 56.5 — "
+            "погрешность GPS») и используй факт юзера.\n\n"
             "🚫 НЕ ВЫДУМЫВАЙ «НОРМУ» КМ/НЕД:\n"
             "Единственный источник недельной нормы — поле `weekly_km_target` в профиле "
             "(блок «КОНТЕКСТ АТЛЕТА» ниже). Если оно есть — это норма. Если нет (или 0) — НОРМА НЕ ЗАДАНА, "
@@ -1637,6 +1670,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                     db_paths=db_paths,
                     user_id=user_id,
                     save_plan_fn=save_plan_fn,
+                    write_tools=write_tools,
                 )
             return await self._generate_text(
                 system_prompt=system,
@@ -1658,6 +1692,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         db_paths: dict[str, str],
         user_id: int | None = None,
         save_plan_fn: Callable[[str, str], str] | None = None,
+        write_tools: dict[str, Callable[..., str]] | None = None,
     ) -> str:
         """Ask with SQL tool use — Claude can query DB directly to answer questions.
 
@@ -1807,6 +1842,117 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
             },
         ]
 
+        # ===== Write-tools для естественного диалога =====
+        # Цель: пользователь общается обычным текстом, бот САМ распознаёт намерение
+        # и вызывает нужный tool. Никаких команд знать не нужно.
+        if write_tools and "confirm_fact" in write_tools:
+            tools.append({
+                "name": "confirm_fact",
+                "description": (
+                    "Сохрани УТВЕРЖДЁННЫЙ пользователем факт за конкретную дату — становится "
+                    "источником истины, который ты будешь видеть в будущих контекстах.\n"
+                    "Вызывай, когда пользователь явно поправляет/утверждает данные:\n"
+                    "• «это правильно: 56 км за неделю» / «верно» (поправка после твоей ошибки)\n"
+                    "• «вчера было темповая Z4, а не Z3»\n"
+                    "• «итог неделя 15-21.06 — 56.14 км бега»\n"
+                    "• «в субботу 20.06 — отдых, не тренировка»\n"
+                    "• «пятница 19.06 — темповая 10.5 км Z4 5:46/км, чёткое выполнение»\n"
+                    "НЕ вызывай для бытовых разговоров и предположений. Только когда юзер "
+                    "ПОПРАВЛЯЕТ или ПОДТВЕРЖДАЕТ конкретные цифры/факты за дату.\n"
+                    "fact_date — YYYY-MM-DD. Если юзер сказал «вчера» — резолви относительно «Сегодня» в контексте."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "fact_date": {"type": "string", "description": "ISO дата факта (YYYY-MM-DD)"},
+                        "fact_text": {"type": "string", "description": "Краткая формулировка факта"},
+                    },
+                    "required": ["fact_date", "fact_text"],
+                },
+            })
+        if write_tools and "remember_note" in write_tools:
+            tools.append({
+                "name": "remember_note",
+                "description": (
+                    "Сохрани долговременную заметку об атлете в персональную память (она будет "
+                    "видна в системном промпте всегда, пока не истечёт срок).\n"
+                    "Вызывай вместо тега [ЗАПОМНИТЬ]. Поводы:\n"
+                    "• Травмы, болезни, хронические состояния («болит ахилл»)\n"
+                    "• Предпочтения и расписание («не бегаю по средам»)\n"
+                    "• Стиль общения («пиши короче»)\n"
+                    "• Курсы лекарств с СРОКОМ — обязательно ставь expires_at\n"
+                    "expires_at — необязательное YYYY-MM-DD. Для курсов/отпусков считай дату окончания.\n"
+                    "🚫 Не вызывай для целей, гонок, веса, LTHR, результатов забегов — есть структурные таблицы."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "description": "Краткая формулировка"},
+                        "expires_at": {"type": "string", "description": "YYYY-MM-DD или пусто"},
+                    },
+                    "required": ["text"],
+                },
+            })
+        if write_tools and "forget_note" in write_tools:
+            tools.append({
+                "name": "forget_note",
+                "description": (
+                    "Деактивируй заметку из памяти по её id (видишь id в блоке «Важная информация» — "
+                    "они приходят в формате «#N. текст»).\n"
+                    "Вызывай когда юзер говорит «забудь это», «уже не актуально», «убери про X», "
+                    "«антибиотики допил» (если запись о курсе была). Если в памяти нет подходящей "
+                    "заметки — не вызывай."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "item_id": {"type": "integer", "description": "ID заметки из памяти"},
+                    },
+                    "required": ["item_id"],
+                },
+            })
+        if write_tools and "set_race_result" in write_tools:
+            tools.append({
+                "name": "set_race_result",
+                "description": (
+                    "Сохрани фактический результат гонки (race_id из «ПРЕДСТОЯЩИЕ СТАРТЫ» или "
+                    "«НЕДАВНО ПРОБЕЖАЛ» — это структурный источник истины).\n"
+                    "Вызывай когда юзер сообщает результат прошедшего старта:\n"
+                    "• «ночной забег 49:52, сплиты 0-5 23:59, 5-10 25:53» (race_id=4 из контекста)\n"
+                    "• «забег субботу пробежал 47:30»\n"
+                    "Если race_id неоднозначен — спроси юзера, какая именно гонка. "
+                    "Если соответствующей гонки в races нет — лучше confirm_fact, а не выдумывай id."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "race_id": {"type": "integer"},
+                        "actual_time": {"type": "string", "description": "Формат «MM:SS» или «H:MM:SS»"},
+                        "notes": {"type": "string", "description": "Сплиты, темп, ощущения"},
+                    },
+                    "required": ["race_id", "actual_time"],
+                },
+            })
+        if write_tools and "record_feeling" in write_tools:
+            tools.append({
+                "name": "record_feeling",
+                "description": (
+                    "Запиши субъективное самочувствие за день. Вызывай когда юзер говорит:\n"
+                    "• «сегодня чувствую на 3», «плохое самочувствие», «отлично себя чувствую»\n"
+                    "• «устала», «полно сил» — резолви в score 1-5\n"
+                    "score: 1=очень плохо, 2=плохо, 3=нормально, 4=хорошо, 5=отлично.\n"
+                    "note — короткий текст пояснения от юзера (если есть)."
+                ),
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "score": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "note": {"type": "string"},
+                    },
+                    "required": ["score"],
+                },
+            })
+
         if save_plan_fn is not None:
             tools.append({
                 "name": "save_weekly_plan",
@@ -1887,6 +2033,25 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                                         save_result = f"[ошибка сохранения: {e}]"
                                     logger.info("Tool save_weekly_plan week_type=%s plen=%d result=%r",
                                                 week_type, len(plan_text), save_result)
+                                    tool_results.append({
+                                        "type": "tool_result",
+                                        "tool_use_id": block.id,
+                                        "content": save_result,
+                                    })
+                                    continue
+                                # Универсальный диспатч write-tools (confirm_fact,
+                                # remember_note, forget_note, set_race_result, record_feeling).
+                                if write_tools and block.name in write_tools:
+                                    fn = write_tools[block.name]
+                                    try:
+                                        save_result = fn(**(block.input or {}))
+                                    except TypeError as e:
+                                        save_result = f"[ошибка аргументов: {e}]"
+                                    except Exception as e:
+                                        logger.warning("Tool %s failed: %s", block.name, e)
+                                        save_result = f"[ошибка сохранения: {e}]"
+                                    logger.info("Tool %s input=%r result=%r",
+                                                block.name, block.input, save_result)
                                     tool_results.append({
                                         "type": "tool_result",
                                         "tool_use_id": block.id,

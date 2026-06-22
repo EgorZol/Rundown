@@ -2909,6 +2909,11 @@ class GarminBot:
         db_paths = self._service.get_db_paths(user_id)
         db_paths["app"] = str(self._storage._db_path)
 
+        # Recent verified facts — подмешиваются в системный промпт как
+        # источник истины (Claude не должен оспаривать).
+        verified_since = (today - timedelta(days=21)).isoformat()
+        verified_facts = self._storage.list_verified_facts(user_id, since_date=verified_since)
+
         # Write-tool: даём Claude возможность сохранить план, согласованный в чате
         def _save_plan_fn(plan_text: str, week_type: str) -> str:
             valid_types = {"recovery", "base", "build", "peak", "taper"}
@@ -2918,6 +2923,68 @@ class GarminBot:
             self._storage.save_plan(user_id, week_start, plan_text, wt)
             return f"OK: план сохранён (week_start={week_start}, week_type={wt}, длина={len(plan_text)} симв.)"
 
+        # Список действий бота для UI-подтверждения после Claude-ответа.
+        # Каждый элемент: dict с полями для шаблонной фразы юзеру.
+        tool_actions: list[dict] = []
+
+        def _confirm_fact_fn(fact_date: str, fact_text: str) -> str:
+            try:
+                # Защита: дата должна быть ISO; если Claude передал «вчера» —
+                # пусть лучше упадёт, чем сохраним мусор.
+                datetime.fromisoformat(fact_date)
+            except Exception:
+                return "[ошибка: fact_date должен быть YYYY-MM-DD, получил '%s']" % fact_date
+            new_id = self._storage.add_verified_fact(user_id, fact_date, fact_text)
+            tool_actions.append({"kind": "fact", "id": new_id, "date": fact_date, "text": fact_text})
+            return f"OK: факт #{new_id} сохранён за {fact_date}"
+
+        def _remember_note_fn(text: str, expires_at: str | None = None) -> str:
+            text = (text or "").strip()
+            if not text:
+                return "[ошибка: пустой текст]"
+            reason = _classify_bad_memory(text)
+            if reason:
+                return f"[отказано: {reason}. Не сохраняй через remember_note, используй структурную команду или confirm_fact.]"
+            exp_iso = _parse_expiry(expires_at) if expires_at else None
+            new_id = self._storage.add_memory_item(user_id, text, expires_at=exp_iso)
+            if new_id is None:
+                return "OK: уже есть похожая заметка, не дублирую"
+            tool_actions.append({"kind": "remember", "id": new_id, "text": text, "expires_at": exp_iso})
+            return f"OK: заметка #{new_id} сохранена" + (f" (до {exp_iso})" if exp_iso else "")
+
+        def _forget_note_fn(item_id: int) -> str:
+            ok = self._storage.delete_memory_item(user_id, int(item_id))
+            if not ok:
+                return f"[заметка #{item_id} не найдена или уже удалена]"
+            tool_actions.append({"kind": "forget", "id": int(item_id)})
+            return f"OK: заметка #{item_id} удалена"
+
+        def _set_race_result_fn(race_id: int, actual_time: str, notes: str | None = None) -> str:
+            ok = self._storage.set_race_result(user_id, int(race_id), actual_time, notes)
+            if not ok:
+                return f"[гонка #{race_id} не найдена]"
+            tool_actions.append({"kind": "race_result", "id": int(race_id), "time": actual_time})
+            return f"OK: результат #{race_id} = {actual_time}"
+
+        def _record_feeling_fn(score: int, note: str | None = None) -> str:
+            try:
+                score = int(score)
+            except Exception:
+                return "[ошибка: score должен быть числом 1-5]"
+            if score < 1 or score > 5:
+                return "[ошибка: score должен быть 1..5]"
+            self._storage.save_feeling(user_id, today.isoformat(), score, note)
+            tool_actions.append({"kind": "feeling", "score": score})
+            return f"OK: самочувствие за {today.isoformat()} = {score}/5"
+
+        write_tools = {
+            "confirm_fact": _confirm_fact_fn,
+            "remember_note": _remember_note_fn,
+            "forget_note": _forget_note_fn,
+            "set_race_result": _set_race_result_fn,
+            "record_feeling": _record_feeling_fn,
+        }
+
         try:
             answer = await self._analyst.ask(
                 question, metrics, history=history, user_memory=user_memory,
@@ -2925,6 +2992,8 @@ class GarminBot:
                 current_plan=current_plan, current_week_type=current_week_type, db_paths=db_paths,
                 user_id=user_id, today_iso=today.isoformat(),
                 save_plan_fn=_save_plan_fn,
+                write_tools=write_tools,
+                verified_facts=verified_facts,
             )
         except Exception as exc:
             logger.exception("Error in handle_question")
@@ -2966,6 +3035,27 @@ class GarminBot:
                 user_id,
                 "; ".join(f"{m!r}→{r}" for m, r in rejected),
             )
+
+        # Видимые подтверждения действий, выполненных через write-tools (Claude
+        # сам вызвал confirm_fact / remember_note / forget_note / set_race_result /
+        # record_feeling). Группируем по типу — одно сообщение на тип.
+        if tool_actions:
+            lines: list[str] = []
+            for a in tool_actions:
+                k = a["kind"]
+                if k == "fact":
+                    lines.append(f"✅ Принял как факт ({a['date']}): {a['text']}")
+                elif k == "remember":
+                    exp = f" (до {a['expires_at']})" if a.get("expires_at") else ""
+                    lines.append(f"💾 Запомнил #{a['id']}: {a['text']}{exp}")
+                elif k == "forget":
+                    lines.append(f"🗑 Удалил заметку #{a['id']}")
+                elif k == "race_result":
+                    lines.append(f"🏁 Результат гонки #{a['id']}: {a['time']}")
+                elif k == "feeling":
+                    lines.append(f"📝 Самочувствие за сегодня: {a['score']}/5")
+            if lines:
+                await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
 
         # Save to conversation history
         self._storage.add_message(user_id, "user", question, source="qa")

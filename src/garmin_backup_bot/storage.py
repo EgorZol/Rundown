@@ -253,6 +253,26 @@ class Storage:
             if "weekly_km_target" not in existing_cols:
                 conn.execute("ALTER TABLE user_profile_overrides ADD COLUMN weekly_km_target REAL")
 
+            # User-verified facts: всё, что атлет явно «утвердил» в чате
+            # («это правильно X», «вчера было 56 км, не 66»). Бот в системном
+            # промпте отдаёт этот блок как «источник истины — не оспаривай».
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS verified_facts (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    fact_date TEXT NOT NULL,
+                    fact_text TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    is_active INTEGER NOT NULL DEFAULT 1
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_facts_user_date "
+                "ON verified_facts(user_id, fact_date, is_active)"
+            )
+
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS food_entries (
@@ -587,9 +607,13 @@ class Storage:
             return cur.rowcount
 
     def get_user_memory(self, user_id: int) -> str:
-        """Склеивает активные items в \\n-разделённую строку для системного промпта."""
+        """Склеивает активные items в \\n-разделённую строку для системного промпта.
+
+        Формат строк: «#N. текст» — id нужен, чтобы Claude мог вызывать
+        forget_note(item_id=N), когда юзер говорит «забудь это».
+        """
         items = self.list_memory_items(user_id)
-        return "\n".join(it["content"] for it in items)
+        return "\n".join(f"#{it['id']}. {it['content']}" for it in items)
 
     def set_user_memory(self, user_id: int, notes: str) -> None:
         """Полностью заменить заметки (используется при миграции и /forget all)."""
@@ -741,6 +765,52 @@ class Storage:
                  "goal_time": r[4], "notes": r[5], "is_priority": bool(r[6]),
                  "actual_time": r[7], "actual_notes": r[8]}
                 for r in rows]
+
+    # ---------- verified facts (источник истины от атлета) ----------
+
+    def add_verified_fact(self, user_id: int, fact_date: str, fact_text: str) -> int:
+        """Сохраняет утверждённый юзером факт за дату. Возвращает id."""
+        fact_text = (fact_text or "").strip()
+        if not fact_text:
+            return 0
+        with self._connect() as conn:
+            cur = conn.execute(
+                "INSERT INTO verified_facts (user_id, fact_date, fact_text) VALUES (?, ?, ?)",
+                (user_id, fact_date, fact_text),
+            )
+            return int(cur.lastrowid)
+
+    def list_verified_facts(
+        self, user_id: int, since_date: str | None = None
+    ) -> list[dict]:
+        with self._connect() as conn:
+            if since_date:
+                rows = conn.execute(
+                    "SELECT id, fact_date, fact_text, created_at "
+                    "FROM verified_facts WHERE user_id = ? AND is_active = 1 "
+                    "AND fact_date >= ? ORDER BY fact_date DESC, id DESC",
+                    (user_id, since_date),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT id, fact_date, fact_text, created_at "
+                    "FROM verified_facts WHERE user_id = ? AND is_active = 1 "
+                    "ORDER BY fact_date DESC, id DESC",
+                    (user_id,),
+                ).fetchall()
+        return [
+            {"id": r[0], "fact_date": r[1], "fact_text": r[2], "created_at": r[3]}
+            for r in rows
+        ]
+
+    def delete_verified_fact(self, user_id: int, fact_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE verified_facts SET is_active = 0 "
+                "WHERE id = ? AND user_id = ? AND is_active = 1",
+                (fact_id, user_id),
+            )
+            return cur.rowcount > 0
 
     def set_race_result(
         self, user_id: int, race_id: int, actual_time: str | None,
