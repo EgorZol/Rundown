@@ -2243,6 +2243,16 @@ class GarminBot:
             verified_facts = self._storage.list_verified_facts(
                 user_id, since_date=week_start,
             )
+            from . import coach as _coach
+            wprofile = self._storage.get_profile_override(user_id)
+            wplan_meta = self._storage.get_plan_meta(user_id, week_start)
+            wweek_facts = _coach.compute_week_facts(
+                activities=week_activities,
+                week_start=week_start_date,
+                week_end=week_end_date,
+                plan_meta=wplan_meta,
+                profile=wprofile,
+            )
             report = await self._analyst.analyze_weekly_summary(
                 metrics=metrics,
                 plan_text=plan_text,
@@ -2253,6 +2263,7 @@ class GarminBot:
                 weight_kg=weight_kg,
                 week_activities=week_activities,
                 verified_facts=verified_facts,
+                week_facts=wweek_facts,
             )
         except Exception as exc:
             logger.exception("Error generating weekly summary")

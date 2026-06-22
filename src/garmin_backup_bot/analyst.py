@@ -1161,6 +1161,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         weight_kg: float | None = None,
         week_activities: list[dict] | None = None,
         verified_facts: list[dict] | None = None,
+        week_facts: "Any" = None,
     ) -> str:
         """Generate a weekly summary report."""
         from datetime import date as _date, timedelta as _td
@@ -1384,10 +1385,15 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
 """
         fp = metrics.get("fitness_profile")
         facts_block = self._format_verified_facts_block(verified_facts)
+        coach_block = (
+            "\n\n📐 WEEK FACTS (источник истины, считал не ты):\n" + week_facts.to_prompt_block()
+            if week_facts is not None else ""
+        )
         try:
             return await self._generate_text(
                 system_prompt=(
                     weekly_system
+                    + coach_block
                     + (("\n" + facts_block) if facts_block else "")
                     + self._user_context_block(fp, garmin_zone_boundaries=metrics.get("garmin_zones"))
                 ),
