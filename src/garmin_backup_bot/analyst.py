@@ -2143,11 +2143,16 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
             raise last_exc
         raise RuntimeError("No Anthropic models available")
 
-    async def analyze(self, metrics: dict[str, Any], history: list[dict] | None = None, user_memory: str = "", verified_facts: list[dict] | None = None) -> str:
+    async def analyze(self, metrics: dict[str, Any], history: list[dict] | None = None, user_memory: str = "", verified_facts: list[dict] | None = None, morning_facts: "Any" = None) -> str:
         user_prompt = self._format_metrics(metrics)
         facts_block = self._format_verified_facts_block(verified_facts)
+        coach_block = (
+            "\n\n" + morning_facts.to_prompt_block() + "\n"
+            if morning_facts is not None else ""
+        )
         system = (
             SYSTEM_PROMPT
+            + coach_block
             + (("\n" + facts_block) if facts_block else "")
             + self._user_context_block(metrics.get("fitness_profile"), garmin_zone_boundaries=metrics.get("garmin_zones"))
         )

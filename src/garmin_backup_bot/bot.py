@@ -1801,9 +1801,12 @@ class GarminBot:
             verified_facts = self._storage.list_verified_facts(
                 user_id, since_date=(today - timedelta(days=21)).isoformat()
             )
+            from . import coach as _coach
+            morning_facts = _coach.compute_morning_facts(metrics, today=today)
             analysis = await self._analyst.analyze(
                 metrics, history=history, user_memory=user_memory,
                 verified_facts=verified_facts,
+                morning_facts=morning_facts,
             )
         finally:
             stop.set()
