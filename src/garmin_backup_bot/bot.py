@@ -594,15 +594,21 @@ class GarminBot:
     async def status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._track_event(update, "status")
         user_id = update.effective_user.id
+        from . import __version__ as _bot_version
         creds = self._storage.get_credentials(user_id)
         if not creds:
             await update.message.reply_text(
-                "Garmin не подключён. Используй /link_garmin", reply_markup=MAIN_KEYBOARD
+                f"Garmin не подключён. Используй /link_garmin\n\nверсия бота: v{_bot_version}",
+                reply_markup=MAIN_KEYBOARD,
             )
             return
         sync_info = self._service.get_sync_summary(user_id)
         last_sync = sync_info.last_sync_at if sync_info else "нет данных"
-        text = f"Garmin: {creds.username}\nПоследняя синхронизация: {last_sync}"
+        text = (
+            f"Garmin: {creds.username}\n"
+            f"Последняя синхронизация: {last_sync}\n\n"
+            f"версия бота: v{_bot_version}"
+        )
         await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
 
     async def remember(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
