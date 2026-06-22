@@ -106,23 +106,29 @@ class HealthAnalyst:
 
     async def _generate_text(
         self,
-        system_prompt: str,
+        system_prompt: str | list[dict],
         user_prompt: str,
         max_tokens: int,
         history: list[dict] | None = None,
         user_memory: str = "",
     ) -> str:
-        # Prepend persistent user memory to system prompt if present
-        full_system = system_prompt
-        if user_memory:
-            full_system = f"Важная информация о пользователе (запомни навсегда):\n{user_memory}\n\n{system_prompt}"
-
         # Build messages: history (prior turns) + current user message
         messages: list[dict] = list(history or [])
         messages.append({"role": "user", "content": user_prompt})
 
-        # System prompt as cacheable block — Anthropic will cache if ≥1024 tokens
-        system_block = [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral"}}]
+        # system_prompt может быть либо строкой (legacy), либо уже готовым списком
+        # блоков [stable+cache_control, dynamic]. Сплит делает вызывающая сторона —
+        # это даёт prompt-cache hit на стабильную часть.
+        if isinstance(system_prompt, list):
+            system_block = system_prompt
+        else:
+            full_system = system_prompt
+            if user_memory:
+                full_system = (
+                    "Важная информация о пользователе (запомни навсегда):\n"
+                    f"{user_memory}\n\n{system_prompt}"
+                )
+            system_block = [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral"}}]
 
         last_exc: Exception | None = None
         for idx, model in enumerate(self._models):
@@ -1374,13 +1380,23 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         if upcoming_races:
             from datetime import date as _date
             today_d = _date.today()
-            race_lines = ["\nПРЕДСТОЯЩИЕ СТАРТЫ:"]
+            future_lines: list[str] = []
+            past_lines: list[str] = []
             for r in upcoming_races:
                 days_left = (_date.fromisoformat(r["date"]) - today_d).days
                 dist = f" {r['distance_km']:.1f}км" if r.get("distance_km") else ""
                 goal_t = f", цель {r['goal_time']}" if r.get("goal_time") else ""
-                race_lines.append(f"  {r['date']} — {r['name']}{dist}{goal_t} (через {days_left} дн.)")
-            extra_context += "\n".join(race_lines)
+                star = " ⭐" if r.get("is_priority") else ""
+                if days_left >= 0:
+                    future_lines.append(f"  #{r.get('id','?')} {r['date']} — {r['name']}{dist}{goal_t}{star} (через {days_left} дн.)")
+                else:
+                    actual = r.get("actual_time") or "результат не указан"
+                    note = f", {r['actual_notes']}" if r.get("actual_notes") else ""
+                    past_lines.append(f"  #{r.get('id','?')} {r['date']} — {r['name']}{dist}: факт {actual}{note}")
+            if future_lines:
+                extra_context += "\nПРЕДСТОЯЩИЕ СТАРТЫ:\n" + "\n".join(future_lines)
+            if past_lines:
+                extra_context += "\n\nНЕДАВНО ПРОБЕЖАЛ (структурный источник истины — не переспрашивай результат):\n" + "\n".join(past_lines)
         if current_plan:
             extra_context += f"\nТЕКУЩИЙ ПЛАН НЕДЕЛИ:\n{current_plan}"
 
@@ -1388,13 +1404,14 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         _today = today_iso or _date.today().isoformat()
         _yd = (_date.fromisoformat(_today) - _td(days=1)).isoformat()
         _user_id_str = str(user_id) if user_id else "?"
-        system = (
+        # STABLE — почти не меняется между вызовами одного юзера в течение дня:
+        # роль + правила + инструменты + self-recognition + user_memory + user_id.
+        # Этот блок пойдёт под cache_control: ephemeral, чтобы получать cache_read.
+        stable_part = (
             "Ты — персональный тренер и health-ассистент. У тебя есть прямой доступ к базе данных Garmin "
             "пользователя через SQL-инструменты.\n\n"
-            f"⚙️ КОНТЕКСТ ЗАПРОСА:\n"
+            "⚙️ КОНТЕКСТ ЗАПРОСА (стабильная часть):\n"
             f"• user_id текущего пользователя: {_user_id_str} — ВСЕГДА используй этот user_id в WHERE для app_db\n"
-            f"• Сегодня: {_today}\n"
-            f"• Вчера: {_yd}\n"
             "• Формат дат в БД: 'YYYY-MM-DD' (например '2026-05-13'). НЕ используй другие форматы\n"
             "• Таблицы health_db и activities_db уже per-user (не нужен user_id в WHERE)\n"
             "• Таблицы app_db общие — ОБЯЗАТЕЛЬНО WHERE user_id = " + _user_id_str + "\n\n"
@@ -1500,11 +1517,32 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
             "• «я не бегаю по средам» → [ЗАПОМНИТЬ: не бегает по средам]\n"
             "• «хочу больше интервалов» → [ЗАПОМНИТЬ: предпочитает больше интервальных тренировок]\n"
             "• «пиши покороче» → [ЗАПОМНИТЬ: предпочитает короткие ответы]\n"
-            "НЕ дублируй то, что уже есть в заметках пользователя. Тег ставь ТОЛЬКО когда есть новая информация.\n\n"
+            "🚫 НЕЛЬЗЯ через [ЗАПОМНИТЬ]: цели с датами, гонки/старты, вес, LTHR, часовой пояс, планы тренировок, "
+            "результаты прошлых забегов с временем — для них есть структурные команды (/goal /race /tz, кнопки ⚖/💓). "
+            "Сохранение их в заметки → расхождение с БД и две разные «цели» одновременно.\n"
+            "НЕ дублируй то, что уже есть в заметках пользователя. Тег ставь ТОЛЬКО когда есть новая информация.\n"
+        )
+        # user_memory клеим в стабильную часть — он редко меняется в течение
+        # сессии и должен попадать под кэш вместе с правилами.
+        if user_memory:
+            stable_part = (
+                "Важная информация о пользователе (запомни навсегда):\n"
+                f"{user_memory}\n\n" + stable_part
+            )
+        # DYNAMIC — то, что меняется каждый день/вызов: даты, снапшот метрик,
+        # цель/гонки/план, профиль атлета. Этот блок НЕ кэшируется.
+        dynamic_part = (
+            f"⚙️ КОНТЕКСТ ЗАПРОСА (динамика):\n"
+            f"• Сегодня: {_today}\n"
+            f"• Вчера: {_yd}\n\n"
             + context_block
             + extra_context
             + self._user_context_block(fitness_profile, garmin_zone_boundaries=(metrics or {}).get("garmin_zones"))
         )
+        system: list[dict] = [
+            {"type": "text", "text": stable_part, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": dynamic_part},
+        ]
         try:
             if db_paths:
                 return await self._ask_with_tools(
@@ -1529,7 +1567,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
 
     async def _ask_with_tools(
         self,
-        system: str,
+        system: str | list[dict],
         question: str,
         history: list[dict] | None,
         user_memory: str,
@@ -1713,10 +1751,18 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                 },
             })
 
-        full_system = system
-        if user_memory:
-            full_system = f"Важная информация о пользователе:\n{user_memory}\n\n{system}"
-        system_block = [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral"}}]
+        # `system` может быть готовым списком блоков [stable+cache, dynamic]
+        # — в этом случае user_memory уже вшит в stable и доп. префикс не нужен.
+        if isinstance(system, list):
+            system_block = system
+        else:
+            full_system = system
+            if user_memory:
+                full_system = (
+                    "Важная информация о пользователе:\n"
+                    f"{user_memory}\n\n{system}"
+                )
+            system_block = [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral"}}]
 
         base_messages: list[dict] = list(history or [])
         base_messages.append({"role": "user", "content": question})

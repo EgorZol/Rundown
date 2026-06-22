@@ -101,6 +101,50 @@ class Storage:
                 )
                 """
             )
+            # Per-item user memory: позволяет точечно удалять (/forget N),
+            # ставить срок жизни (антибиотики и др. временные), дедуп по содержанию.
+            # Старый user_memory.notes остаётся как fallback на время миграции.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS user_memory_items (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TEXT,
+                    is_active INTEGER NOT NULL DEFAULT 1
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memory_items_user "
+                "ON user_memory_items(user_id, is_active)"
+            )
+            # Одноразовая миграция из user_memory.notes: для каждого юзера,
+            # у которого ещё нет ни одного item — split notes по \n и залить
+            # как items без expiry.
+            for user_id, notes in conn.execute(
+                "SELECT user_id, notes FROM user_memory WHERE notes != ''"
+            ).fetchall():
+                has_items = conn.execute(
+                    "SELECT 1 FROM user_memory_items WHERE user_id = ? LIMIT 1",
+                    (user_id,),
+                ).fetchone()
+                if has_items:
+                    continue
+                seen: set[str] = set()
+                for raw_line in notes.split("\n"):
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+                    key = line.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    conn.execute(
+                        "INSERT INTO user_memory_items (user_id, content) VALUES (?, ?)",
+                        (user_id, line),
+                    )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS daily_summaries_sent (
@@ -162,6 +206,13 @@ class Storage:
             races_cols = {r[1] for r in conn.execute("PRAGMA table_info(races)").fetchall()}
             if "is_priority" not in races_cols:
                 conn.execute("ALTER TABLE races ADD COLUMN is_priority INTEGER NOT NULL DEFAULT 0")
+            if "actual_time" not in races_cols:
+                # Фактический результат гонки (e.g. "49:52" или "3:31:55"). Заполняется
+                # после старта через /race result. Структурное место для результата,
+                # чтобы он не дублировался в user_memory и не приводил к переспросу.
+                conn.execute("ALTER TABLE races ADD COLUMN actual_time TEXT")
+            if "actual_notes" not in races_cols:
+                conn.execute("ALTER TABLE races ADD COLUMN actual_notes TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS user_profile_overrides (
@@ -376,8 +427,12 @@ class Storage:
                 (user_id, summary_date.isoformat(), datetime.now(timezone.utc).isoformat()),
             )
 
-    def add_message(self, user_id: int, role: str, content: str, source: str = "qa", keep_last: int = 60) -> None:
-        """Save a conversation message and trim old ones beyond keep_last."""
+    def add_message(self, user_id: int, role: str, content: str, source: str, keep_last: int = 60) -> None:
+        """Save a conversation message and trim old ones beyond keep_last.
+
+        `source` обязателен — допустимые значения: 'morning', 'workout', 'qa',
+        'plan_tweak'. Без явного source легко тихо засорить QA-историю.
+        """
         now_iso = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:
             conn.execute(
@@ -398,16 +453,23 @@ class Storage:
                 (user_id, user_id, keep_last),
             )
 
-    def get_history(self, user_id: int, limit: int = 20, source: str | None = None) -> list[dict]:
+    def get_history(
+        self,
+        user_id: int,
+        limit: int = 20,
+        sources: list[str] | tuple[str, ...] | str | None = None,
+    ) -> list[dict]:
         """Return the last `limit` messages as [{'role': ..., 'content': ...}].
 
-        If `source` provided — фильтрует только сообщения этого источника
-        ('morning', 'workout', 'qa', 'plan_tweak'). Полезно для брифов: чтобы
-        QA-история с прошлыми вопросами/извинениями не загрязняла системный
-        контекст утреннего/тренировочного отчёта.
+        `sources` — фильтр по типам источников:
+          • None — все сообщения
+          • str  — один источник (обратная совместимость)
+          • list/tuple — несколько источников (e.g. ('morning','qa'))
         """
+        if isinstance(sources, str):
+            sources = (sources,)
         with self._connect() as conn:
-            if source is None:
+            if not sources:
                 rows = conn.execute(
                     """
                     SELECT role, content FROM (
@@ -420,36 +482,122 @@ class Storage:
                     (user_id, limit),
                 ).fetchall()
             else:
+                placeholders = ",".join("?" * len(sources))
                 rows = conn.execute(
-                    """
+                    f"""
                     SELECT role, content FROM (
                         SELECT id, role, content FROM conversation_messages
-                        WHERE user_id = ? AND source = ?
+                        WHERE user_id = ? AND source IN ({placeholders})
                         ORDER BY id DESC
                         LIMIT ?
                     ) ORDER BY id ASC
                     """,
-                    (user_id, source, limit),
+                    (user_id, *sources, limit),
                 ).fetchall()
         return [{"role": row[0], "content": row[1]} for row in rows]
 
-    def get_user_memory(self, user_id: int) -> str:
+    # ---------- user memory: per-item модель ----------
+
+    def list_memory_items(self, user_id: int) -> list[dict]:
+        """Активные (не удалённые, не протухшие) заметки в порядке создания."""
+        today = datetime.now(timezone.utc).date().isoformat()
         with self._connect() as conn:
-            row = conn.execute(
-                "SELECT notes FROM user_memory WHERE user_id = ?", (user_id,)
-            ).fetchone()
-        return row[0] if row else ""
+            rows = conn.execute(
+                """
+                SELECT id, content, created_at, expires_at
+                FROM user_memory_items
+                WHERE user_id = ? AND is_active = 1
+                  AND (expires_at IS NULL OR expires_at >= ?)
+                ORDER BY id ASC
+                """,
+                (user_id, today),
+            ).fetchall()
+        return [
+            {"id": r[0], "content": r[1], "created_at": r[2], "expires_at": r[3]}
+            for r in rows
+        ]
+
+    def add_memory_item(
+        self, user_id: int, content: str, expires_at: str | None = None
+    ) -> int | None:
+        """Добавить заметку с дедупом (case-insensitive substring).
+
+        Возвращает id новой записи или None если поглощена дубликатом.
+        """
+        content = content.strip()
+        if not content:
+            return None
+        norm = content.lower()
+        with self._connect() as conn:
+            existing = conn.execute(
+                """
+                SELECT id, content FROM user_memory_items
+                WHERE user_id = ? AND is_active = 1
+                """,
+                (user_id,),
+            ).fetchall()
+            for ex_id, ex_content in existing:
+                ex_norm = ex_content.lower()
+                # точное совпадение / новый — подстрока существующего → пропускаем
+                if norm == ex_norm or norm in ex_norm:
+                    return None
+                # новый — supersedes (содержит существующее) → деактивируем старое
+                if ex_norm in norm:
+                    conn.execute(
+                        "UPDATE user_memory_items SET is_active = 0 WHERE id = ?",
+                        (ex_id,),
+                    )
+            cur = conn.execute(
+                """
+                INSERT INTO user_memory_items (user_id, content, expires_at)
+                VALUES (?, ?, ?)
+                """,
+                (user_id, content, expires_at),
+            )
+            return int(cur.lastrowid)
+
+    def delete_memory_item(self, user_id: int, item_id: int) -> bool:
+        """Деактивирует одну заметку. Возвращает True если найдена и удалена."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE user_memory_items SET is_active = 0
+                WHERE id = ? AND user_id = ? AND is_active = 1
+                """,
+                (item_id, user_id),
+            )
+            return cur.rowcount > 0
+
+    def clear_user_memory(self, user_id: int) -> int:
+        """Деактивирует все активные заметки. Возвращает количество удалённых."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE user_memory_items SET is_active = 0
+                WHERE user_id = ? AND is_active = 1
+                """,
+                (user_id,),
+            )
+            # Чистим и старое поле notes, чтобы не воскресло при ре-миграции
+            conn.execute(
+                "UPDATE user_memory SET notes = '', updated_at = CURRENT_TIMESTAMP "
+                "WHERE user_id = ?",
+                (user_id,),
+            )
+            return cur.rowcount
+
+    def get_user_memory(self, user_id: int) -> str:
+        """Склеивает активные items в \\n-разделённую строку для системного промпта."""
+        items = self.list_memory_items(user_id)
+        return "\n".join(it["content"] for it in items)
 
     def set_user_memory(self, user_id: int, notes: str) -> None:
-        now_iso = datetime.now(timezone.utc).isoformat()
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO user_memory (user_id, notes, updated_at) VALUES (?, ?, ?)
-                ON CONFLICT(user_id) DO UPDATE SET notes=excluded.notes, updated_at=excluded.updated_at
-                """,
-                (user_id, notes.strip(), now_iso),
-            )
+        """Полностью заменить заметки (используется при миграции и /forget all)."""
+        self.clear_user_memory(user_id)
+        for raw_line in (notes or "").split("\n"):
+            line = raw_line.strip()
+            if line:
+                self.add_memory_item(user_id, line)
 
     def get_plan(self, user_id: int, week_start: str) -> tuple[str, str] | None:
         """Return (plan_text, generated_at_iso) or None."""
@@ -565,19 +713,34 @@ class Storage:
         with self._connect() as conn:
             if from_date:
                 rows = conn.execute(
-                    "SELECT id, race_date, name, distance_km, goal_time, notes, is_priority "
+                    "SELECT id, race_date, name, distance_km, goal_time, notes, is_priority, "
+                    "actual_time, actual_notes "
                     "FROM races WHERE user_id = ? AND race_date >= ? ORDER BY race_date",
                     (user_id, from_date),
                 ).fetchall()
             else:
                 rows = conn.execute(
-                    "SELECT id, race_date, name, distance_km, goal_time, notes, is_priority "
+                    "SELECT id, race_date, name, distance_km, goal_time, notes, is_priority, "
+                    "actual_time, actual_notes "
                     "FROM races WHERE user_id = ? ORDER BY race_date",
                     (user_id,),
                 ).fetchall()
         return [{"id": r[0], "date": r[1], "name": r[2], "distance_km": r[3],
-                 "goal_time": r[4], "notes": r[5], "is_priority": bool(r[6])}
+                 "goal_time": r[4], "notes": r[5], "is_priority": bool(r[6]),
+                 "actual_time": r[7], "actual_notes": r[8]}
                 for r in rows]
+
+    def set_race_result(
+        self, user_id: int, race_id: int, actual_time: str | None,
+        actual_notes: str | None = None,
+    ) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE races SET actual_time = ?, actual_notes = COALESCE(?, actual_notes) "
+                "WHERE id = ? AND user_id = ?",
+                (actual_time, actual_notes, race_id, user_id),
+            )
+            return cur.rowcount > 0
 
     def delete_race(self, user_id: int, race_id: int) -> bool:
         with self._connect() as conn:

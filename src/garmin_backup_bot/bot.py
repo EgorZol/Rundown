@@ -126,6 +126,35 @@ def _api_error_msg(exc: Exception, action: str = "операция") -> str:
     return f"Не удалось выполнить {action}: {exc}"
 
 
+# Паттерны строк, которым НЕ место в user_memory: для них есть структурные
+# поля (training_goal / races / weekly_plans / user_profile_overrides).
+# Сохранение их «навсегда» приводит к расхождению с реальной БД и к тому,
+# что Claude видит две разные цели/гонки одновременно.
+_BAD_MEMORY_PATTERNS: list[tuple[str, str]] = [
+    (r"(?i)\bцел[ьи][\s—:\-—]", "это похоже на цель — используй /goal"),
+    (r"(?i)\bплан\s+(?:на|недел|трениров)", "это похоже на план — используй кнопку 📅 План"),
+    (r"(?i)\b(?:марафон|полумарафон|забег|старт|гонка)\b.{0,40}\d{1,2}[./\-]\d{1,2}",
+     "гонка с датой — заведи через /race add"),
+    (r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", "конкретная дата — используй /race или /goal"),
+    (r"(?i)\bLTHR\s*[:=]?\s*\d{2,3}\b", "LTHR — используй кнопку 💓 LTHR"),
+    (r"(?i)\bвес\s*[:=]?\s*\d{2,3}(?:[.,]\d)?\s*кг", "вес — используй кнопку ⚖ Вес"),
+    (r"(?i)\bчасовой\s+пояс\b", "часовой пояс — команда /tz"),
+]
+
+
+def _classify_bad_memory(note: str) -> str | None:
+    """Возвращает причину отказа сохранять заметку или None если ок."""
+    text = (note or "").strip()
+    if not text:
+        return "пустая строка"
+    if len(text) > 300:
+        return "слишком длинная (>300 симв.) — обычно это план/отчёт, не заметка"
+    for pattern, reason in _BAD_MEMORY_PATTERNS:
+        if re.search(pattern, text):
+            return reason
+    return None
+
+
 class GarminBot:
     _MAX_MSG_LEN = 4000
 
@@ -522,34 +551,93 @@ class GarminBot:
         note = " ".join(context.args or []).strip()
         if not note:
             await update.message.reply_text(
-                "Использование: /remember <заметка>\n\nПример:\n/remember Моя цель — пробежать полумарафон за 1:45 в мае 2026\n/remember Я предпочитаю тренировки утром, не переношу жару",
+                "Использование: /remember <заметка>\n\n"
+                "Пример:\n"
+                "/remember Не переношу жару\n"
+                "/remember Бегаю утром, не вечером\n\n"
+                "⚠️ Цели и гонки — через /goal и /race, не через /remember "
+                "(иначе бот будет видеть две разные цели).",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
-        current = self._storage.get_user_memory(user_id)
-        updated = (current + "\n" + note).strip() if current else note
-        self._storage.set_user_memory(user_id, updated)
-        await update.message.reply_text(
-            f"Запомнил. Теперь Claude всегда будет учитывать это.\n\nТекущие заметки:\n{updated}",
-            reply_markup=MAIN_KEYBOARD,
-        )
+        bad_reason = _classify_bad_memory(note)
+        if bad_reason:
+            await update.message.reply_text(
+                f"Не сохранил — {bad_reason}\n\nИспользуй структурную команду.",
+                reply_markup=MAIN_KEYBOARD,
+            )
+            return
+        new_id = self._storage.add_memory_item(user_id, note)
+        if new_id is None:
+            await update.message.reply_text(
+                "Уже есть похожая заметка — не дублирую.", reply_markup=MAIN_KEYBOARD
+            )
+            return
+        await self._show_memory_list(update, user_id, header=f"Запомнил (#{new_id}).")
 
     async def show_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show current persistent memory."""
+        """Show current persistent memory as a numbered list."""
         user_id = update.effective_user.id
-        notes = self._storage.get_user_memory(user_id)
-        if notes:
-            await update.message.reply_text(f"Твои заметки для Claude:\n\n{notes}", reply_markup=MAIN_KEYBOARD)
-        else:
+        await self._show_memory_list(update, user_id)
+
+    async def _show_memory_list(
+        self, update: Update, user_id: int, header: str | None = None
+    ) -> None:
+        items = self._storage.list_memory_items(user_id)
+        if not items:
             await update.message.reply_text(
-                "Заметок пока нет. Добавь через /remember <текст>", reply_markup=MAIN_KEYBOARD
+                "Заметок пока нет.\n\n"
+                "Добавь: /remember <текст>\n"
+                "Удалить одну: /forget <N>\n"
+                "Удалить все: /forget all",
+                reply_markup=MAIN_KEYBOARD,
             )
+            return
+        lines = []
+        if header:
+            lines.append(header)
+            lines.append("")
+        lines.append("Твои заметки (видны боту всегда):")
+        for it in items:
+            exp = f" ⏳ до {it['expires_at']}" if it.get("expires_at") else ""
+            lines.append(f"#{it['id']}. {it['content']}{exp}")
+        lines.append("")
+        lines.append("Удалить одну: /forget <N>  ·  Все: /forget all")
+        await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
 
     async def forget_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Clear all persistent memory."""
+        """Удалить одну заметку (/forget <N>) или все (/forget all)."""
         user_id = update.effective_user.id
-        self._storage.set_user_memory(user_id, "")
-        await update.message.reply_text("Заметки очищены.", reply_markup=MAIN_KEYBOARD)
+        args = context.args or []
+        if not args:
+            await update.message.reply_text(
+                "Использование:\n/forget <N> — удалить заметку #N\n/forget all — удалить все\n\n"
+                "Список с номерами: /memory",
+                reply_markup=MAIN_KEYBOARD,
+            )
+            return
+        token = args[0].strip().lower()
+        if token in ("all", "все", "всё"):
+            n = self._storage.clear_user_memory(user_id)
+            await update.message.reply_text(
+                f"Удалил все заметки ({n} шт.).", reply_markup=MAIN_KEYBOARD
+            )
+            return
+        try:
+            item_id = int(token.lstrip("#"))
+        except ValueError:
+            await update.message.reply_text(
+                "Не понял номер. Пример: /forget 3 или /forget all",
+                reply_markup=MAIN_KEYBOARD,
+            )
+            return
+        if self._storage.delete_memory_item(user_id, item_id):
+            await self._show_memory_list(update, user_id, header=f"Удалил #{item_id}.")
+        else:
+            await update.message.reply_text(
+                f"Заметки #{item_id} не нашёл (возможно уже удалена). /memory — актуальный список.",
+                reply_markup=MAIN_KEYBOARD,
+            )
 
     async def handle_goal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Set or view training goal: /goal [description]"""
@@ -724,11 +812,13 @@ class GarminBot:
             lines.append("Прошедшие:")
             for r in past[-3:]:
                 dist = f" · {r['distance_km']:.1f} км" if r["distance_km"] else ""
-                lines.append(f"  ✓ {r['date']} — {r['name']}{dist}")
+                actual = f" — {r['actual_time']}" if r.get("actual_time") else " (нет результата — /race result #{} <время>)".format(r["id"])
+                lines.append(f"  ✓ #{r['id']} {r['date']} — {r['name']}{dist}{actual}")
 
         lines.append(
             "\nДобавить: /race ГГГГ-ММ-ДД Название [дистанция] [время]"
             "\nили текстом: /race бегу полумарафон в мае, хочу 1:47"
+            "\nРезультат: /race result #ID 49:52 [заметка]"
             "\nУдалить: /race delete #ID"
             "\nПриоритет (A-гонка): /race priority #ID  |  снять: /race unpriority #ID"
         )
@@ -773,6 +863,31 @@ class GarminBot:
                     )
             except ValueError:
                 await update.message.reply_text("Укажи номер: /race delete #3", reply_markup=MAIN_KEYBOARD)
+            return
+
+        # Result — записать фактическое время гонки: /race result #N 49:52 [заметка]
+        if args[0].lower() == "result" and len(args) >= 3:
+            try:
+                race_id = int(args[1].lstrip("#"))
+            except ValueError:
+                await update.message.reply_text(
+                    "Укажи номер: /race result #3 49:52",
+                    reply_markup=MAIN_KEYBOARD,
+                )
+                return
+            actual_time = args[2].strip()
+            actual_notes = " ".join(args[3:]).strip() or None
+            if not self._storage.set_race_result(user_id, race_id, actual_time, actual_notes):
+                await update.message.reply_text(
+                    f"Старт #{race_id} не найден.", reply_markup=MAIN_KEYBOARD,
+                )
+                return
+            tail = f"\nЗаметки: {actual_notes}" if actual_notes else ""
+            await update.message.reply_text(
+                f"✅ Результат старта #{race_id} сохранён: {actual_time}{tail}\n\n"
+                + self._format_race_calendar(user_id),
+                reply_markup=MAIN_KEYBOARD,
+            )
             return
 
         # Priority on/off — пометить гонку как A-race (под которую периодизация)
@@ -1579,8 +1694,11 @@ class GarminBot:
             metrics["weekly_km_target_label"] = target_label
 
             header = self._analyst.format_header(metrics, tz=self._get_user_tz(user_id))
-            # Только morning-история, чтобы QA-обсуждения с извинениями не загрязняли бриф
-            history = self._storage.get_history(user_id, limit=10, source="morning")
+            # Утренняя история — все «крупные» источники, чтобы бот видел ответы
+            # пользователя из QA (например, результат вчерашней гонки) и не переспрашивал.
+            history = self._storage.get_history(
+                user_id, limit=12, sources=("morning", "workout", "qa", "plan_tweak")
+            )
             user_memory = self._storage.get_user_memory(user_id)
             analysis = await self._analyst.analyze(metrics, history=history, user_memory=user_memory)
         finally:
@@ -1591,6 +1709,7 @@ class GarminBot:
         with contextlib.suppress(Exception):
             await status_msg.delete()
 
+        analysis = self._strip_memory_tags(analysis)
         full_text = header + "\n" + analysis
         chunks = self._split(full_text)
         for chunk in chunks:
@@ -1602,9 +1721,12 @@ class GarminBot:
             for chunk in self._split(nutrition_report):
                 await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
-        # Save to conversation history (truncate long reports to save context)
+        # Сохраняем полностью — обрывок в 800 симв. отравлял будущий контекст
+        # (бот не видел собственного вывода, переспрашивал результат гонки и т.п.).
+        # Окно conversation_messages всё равно ограничено keep_last=60 на юзера.
         self._storage.add_message(user_id, "user", BTN_MORNING, source="morning")
-        self._storage.add_message(user_id, "assistant", full_text[:800], source="morning")
+        morning_full = full_text + (f"\n\n{nutrition_report}" if nutrition_report else "")
+        self._storage.add_message(user_id, "assistant", morning_full, source="morning")
 
     async def handle_workout(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._track_event(update, "workout")
@@ -1694,10 +1816,13 @@ class GarminBot:
             week_start = (today - timedelta(days=today.weekday())).isoformat()
             cached_plan_row = self._storage.get_plan(user_id, week_start)
             cached_plan = cached_plan_row[0] if cached_plan_row else None
-            # Workout analysis is self-contained — passing 60 messages of prior workout analyses
-            # bloats input to ~17k tokens and causes response truncation.
+            # Узкая история: только прошлые workout/qa, лимит 6 — этого хватает
+            # на «вчера я говорил, что устал», без раздутия до 17k токенов.
+            workout_history = self._storage.get_history(
+                user_id, limit=6, sources=("workout", "qa")
+            )
             analysis = await self._analyst.analyze_workout(
-                activities, daily_metrics, history=None,
+                activities, daily_metrics, history=workout_history,
                 user_memory=user_memory, plan_text=cached_plan,
             )
         finally:
@@ -1708,13 +1833,14 @@ class GarminBot:
         with contextlib.suppress(Exception):
             await status_msg.delete()
 
+        analysis = self._strip_memory_tags(analysis)
         chunks = self._split(analysis)
         for chunk in chunks:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
-        # Save to conversation history (truncate long reports to save context)
+        # Полный текст, без [:800] — иначе бот теряет связность между сессиями.
         self._storage.add_message(user_id, "user", BTN_WORKOUT, source="workout")
-        self._storage.add_message(user_id, "assistant", analysis[:800], source="workout")
+        self._storage.add_message(user_id, "assistant", analysis, source="workout")
 
     async def handle_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._track_event(update, "plan")
@@ -1818,6 +1944,7 @@ class GarminBot:
         with contextlib.suppress(Exception):
             await status_msg.delete()
 
+        plan_text = self._strip_memory_tags(plan_text)
         chunks = self._split(plan_text)
         for chunk in chunks:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
@@ -2646,10 +2773,16 @@ class GarminBot:
             if qa_activities:
                 metrics["recent_activities_for_qa"] = qa_activities[:5]
 
-        history = self._storage.get_history(user_id, limit=20)
+        history = self._storage.get_history(
+            user_id, limit=20,
+            sources=("qa", "plan_tweak", "morning", "workout"),
+        )
         user_memory = self._storage.get_user_memory(user_id)
         training_goal = self._storage.get_goal(user_id)
-        upcoming_races = self._storage.get_races(user_id, from_date=today.isoformat())
+        # Включаем прошедшие старты за 21 день — чтобы Claude видел недавние
+        # фактические результаты (`actual_time`) и не переспрашивал «как прошёл забег».
+        past_horizon = (today - timedelta(days=21)).isoformat()
+        upcoming_races = self._storage.get_races(user_id, from_date=past_horizon)
         week_start = (today - timedelta(days=today.weekday())).isoformat()
         current_plan_row = self._storage.get_plan(user_id, week_start)
         current_plan = current_plan_row[0] if current_plan_row else ""
@@ -2690,19 +2823,29 @@ class GarminBot:
         for chunk in chunks[1:]:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
-        # Save extracted memories
-        if memories:
-            current_notes = self._storage.get_user_memory(user_id)
-            new_notes = current_notes.rstrip()
-            for mem in memories:
-                if mem.lower() not in current_notes.lower():
-                    new_notes += f"\n{mem}"
-            if new_notes != current_notes:
-                self._storage.set_user_memory(user_id, new_notes.strip())
-                await update.message.reply_text(
-                    f"💾 Запомнил: {'; '.join(memories)}",
-                    reply_markup=MAIN_KEYBOARD,
-                )
+        # Save extracted memories — отфильтровать «целе-планово-гонко» подобные
+        # (для них есть структурные команды; не давать им жить в user_memory).
+        saved_memories: list[str] = []
+        rejected: list[tuple[str, str]] = []
+        for mem in memories:
+            reason = _classify_bad_memory(mem)
+            if reason:
+                rejected.append((mem, reason))
+                continue
+            new_id = self._storage.add_memory_item(user_id, mem)
+            if new_id is not None:
+                saved_memories.append(mem)
+        if saved_memories:
+            await update.message.reply_text(
+                f"💾 Запомнил: {'; '.join(saved_memories)}",
+                reply_markup=MAIN_KEYBOARD,
+            )
+        if rejected:
+            logger.info(
+                "Auto-memory rejected for user_id=%s: %s",
+                user_id,
+                "; ".join(f"{m!r}→{r}" for m, r in rejected),
+            )
 
         # Save to conversation history
         self._storage.add_message(user_id, "user", question, source="qa")
@@ -2887,6 +3030,15 @@ class GarminBot:
         # Clean up trailing whitespace/newlines left after removal
         clean = re.sub(r'\n{3,}', '\n\n', clean).strip()
         return clean, memories
+
+    @staticmethod
+    def _strip_memory_tags(text: str) -> str:
+        """Тихо удалить любые [ЗАПОМНИТЬ:…] — для путей вывода, где
+        авто-память не должна обрабатываться (план, анализ, итог недели)."""
+        if "[ЗАПОМНИТЬ" not in text:
+            return text
+        cleaned = re.sub(r"\[ЗАПОМНИТЬ:\s*.+?\]", "", text)
+        return re.sub(r"\n{3,}", "\n\n", cleaned).strip()
 
     @staticmethod
     def _split(text: str, max_len: int = 4000) -> list[str]:
