@@ -1421,6 +1421,8 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         save_plan_fn: Callable[[str, str], str] | None = None,
         write_tools: dict[str, Callable[..., str]] | None = None,
         verified_facts: list[dict] | None = None,
+        morning_facts: "Any" = None,
+        week_facts: "Any" = None,
     ) -> str:
         fitness_profile = None
         context_block = ""
@@ -1689,12 +1691,22 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                 "Важная информация о пользователе (запомни навсегда):\n"
                 f"{user_memory}\n\n" + stable_part
             )
+        # Coach facts — детерминированные блоки. Если переданы — подавляют
+        # право Claude пересчитывать те же величины.
+        coach_block = ""
+        if morning_facts is not None:
+            coach_block += "\n\n" + morning_facts.to_prompt_block()
+        if week_facts is not None:
+            coach_block += "\n\n📐 WEEK FACTS:\n" + week_facts.to_prompt_block()
+
         # DYNAMIC — то, что меняется каждый день/вызов: даты, снапшот метрик,
         # цель/гонки/план, профиль атлета. Этот блок НЕ кэшируется.
         dynamic_part = (
             f"⚙️ КОНТЕКСТ ЗАПРОСА (динамика):\n"
             f"• Сегодня: {_today}\n"
-            f"• Вчера: {_yd}\n\n"
+            f"• Вчера: {_yd}\n"
+            + coach_block
+            + "\n\n"
             + context_block
             + extra_context
             + self._user_context_block(fitness_profile, garmin_zone_boundaries=(metrics or {}).get("garmin_zones"))

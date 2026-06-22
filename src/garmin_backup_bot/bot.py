@@ -3029,6 +3029,21 @@ class GarminBot:
             "record_feeling": _record_feeling_fn,
         }
 
+        # Stage 5: считаем факты дня и недели в коде, подаём Claude как готовые блоки
+        from . import coach as _coach
+        qa_profile = self._storage.get_profile_override(user_id)
+        # активности за 8 дней (хватает на текущую неделю + вчерашний день)
+        qa_week_acts = self._service.collect_recent_activities(user_id, days=8)
+        qa_week_start = today - timedelta(days=today.weekday())
+        qa_week_facts = _coach.compute_week_facts(
+            activities=qa_week_acts,
+            week_start=qa_week_start,
+            week_end=today,
+            plan_meta=plan_meta,
+            profile=qa_profile,
+        )
+        qa_morning_facts = _coach.compute_morning_facts(metrics or {}, today=today) if metrics else None
+
         try:
             answer = await self._analyst.ask(
                 question, metrics, history=history, user_memory=user_memory,
@@ -3038,6 +3053,8 @@ class GarminBot:
                 save_plan_fn=_save_plan_fn,
                 write_tools=write_tools,
                 verified_facts=verified_facts,
+                morning_facts=qa_morning_facts,
+                week_facts=qa_week_facts,
             )
         except Exception as exc:
             logger.exception("Error in handle_question")
