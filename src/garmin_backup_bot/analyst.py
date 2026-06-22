@@ -104,6 +104,25 @@ class HealthAnalyst:
             "Z5": (round(self._hr_max * 0.90), self._hr_max),
         }
 
+    @staticmethod
+    def _format_verified_facts_block(verified_facts: list[dict] | None) -> str:
+        """Возвращает блок «ПОДТВЕРЖДЁННЫЕ ФАКТЫ» для системного промпта.
+
+        Эти факты — overlay поверх Garmin-данных. Когда Claude видит расхождение
+        между Garmin и фактом — должен использовать факт. Реально мутировать
+        Garmin-таблицы нельзя (перезатрутся следующим синком).
+        """
+        if not verified_facts:
+            return ""
+        lines = [
+            "\n🟢 ПОДТВЕРЖДЁННЫЕ АТЛЕТОМ ФАКТЫ (источник истины поверх Garmin — "
+            "не оспаривай, не пересчитывай. Расхождение с БД = ошибка часов/трекинга, "
+            "а не атлета):"
+        ]
+        for f in verified_facts:
+            lines.append(f"  #{f['id']} {f['fact_date']}: {f['fact_text']}")
+        return "\n".join(lines) + "\n"
+
     async def _generate_text(
         self,
         system_prompt: str | list[dict],
@@ -166,7 +185,7 @@ class HealthAnalyst:
             raise last_exc
         raise RuntimeError("No Anthropic models configured")
 
-    async def analyze_workout(self, activities: list[dict[str, Any]], daily_metrics: dict[str, Any] | None, history: list[dict] | None = None, user_memory: str = "", plan_text: str = "", week_type: str = "") -> str:
+    async def analyze_workout(self, activities: list[dict[str, Any]], daily_metrics: dict[str, Any] | None, history: list[dict] | None = None, user_memory: str = "", plan_text: str = "", week_type: str = "", verified_facts: list[dict] | None = None) -> str:
         """Analyze recent workouts and give training feedback."""
         if not activities:
             return "Нет данных о тренировках за последние 7 дней."
@@ -514,9 +533,14 @@ class HealthAnalyst:
 """
         fp = (daily_metrics or {}).get("fitness_profile")
         gz = (daily_metrics or {}).get("garmin_zones")
+        facts_block = self._format_verified_facts_block(verified_facts)
         try:
             return await self._generate_text(
-                system_prompt=workout_system + self._user_context_block(fp, garmin_zone_boundaries=gz),
+                system_prompt=(
+                    workout_system
+                    + (("\n" + facts_block) if facts_block else "")
+                    + self._user_context_block(fp, garmin_zone_boundaries=gz)
+                ),
                 user_prompt=context_block,
                 max_tokens=2000,
                 history=history,
@@ -1127,6 +1151,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         garmin_daily_calories: dict[str, dict] | None = None,
         weight_kg: float | None = None,
         week_activities: list[dict] | None = None,
+        verified_facts: list[dict] | None = None,
     ) -> str:
         """Generate a weekly summary report."""
         from datetime import date as _date, timedelta as _td
@@ -1349,9 +1374,14 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
 • Максимум 1200 символов
 """
         fp = metrics.get("fitness_profile")
+        facts_block = self._format_verified_facts_block(verified_facts)
         try:
             return await self._generate_text(
-                system_prompt=weekly_system + self._user_context_block(fp, garmin_zone_boundaries=metrics.get("garmin_zones")),
+                system_prompt=(
+                    weekly_system
+                    + (("\n" + facts_block) if facts_block else "")
+                    + self._user_context_block(fp, garmin_zone_boundaries=metrics.get("garmin_zones"))
+                ),
                 user_prompt=context,
                 max_tokens=1500,
                 user_memory=user_memory,
@@ -1435,11 +1465,9 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         if current_plan:
             wt_label = f" (фаза: {current_week_type})" if current_week_type else ""
             extra_context += f"\nТЕКУЩИЙ ПЛАН НЕДЕЛИ{wt_label}:\n{current_plan}"
-        if verified_facts:
-            facts_lines = ["\n🟢 ПОДТВЕРЖДЁННЫЕ АТЛЕТОМ ФАКТЫ (источник истины, НЕ оспаривай и НЕ пересчитывай):"]
-            for f in verified_facts:
-                facts_lines.append(f"  #{f['id']} {f['fact_date']}: {f['fact_text']}")
-            extra_context += "\n".join(facts_lines)
+        facts_block = self._format_verified_facts_block(verified_facts)
+        if facts_block:
+            extra_context += "\n" + facts_block
 
         from datetime import date as _date, timedelta as _td
         _today = today_iso or _date.today().isoformat()
@@ -2100,9 +2128,14 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
             raise last_exc
         raise RuntimeError("No Anthropic models available")
 
-    async def analyze(self, metrics: dict[str, Any], history: list[dict] | None = None, user_memory: str = "") -> str:
+    async def analyze(self, metrics: dict[str, Any], history: list[dict] | None = None, user_memory: str = "", verified_facts: list[dict] | None = None) -> str:
         user_prompt = self._format_metrics(metrics)
-        system = SYSTEM_PROMPT + self._user_context_block(metrics.get("fitness_profile"), garmin_zone_boundaries=metrics.get("garmin_zones"))
+        facts_block = self._format_verified_facts_block(verified_facts)
+        system = (
+            SYSTEM_PROMPT
+            + (("\n" + facts_block) if facts_block else "")
+            + self._user_context_block(metrics.get("fitness_profile"), garmin_zone_boundaries=metrics.get("garmin_zones"))
+        )
         try:
             return await self._generate_text(
                 system_prompt=system,

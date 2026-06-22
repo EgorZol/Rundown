@@ -1798,7 +1798,13 @@ class GarminBot:
                 user_id, limit=12, sources=("morning", "workout", "qa", "plan_tweak")
             )
             user_memory = self._storage.get_user_memory(user_id)
-            analysis = await self._analyst.analyze(metrics, history=history, user_memory=user_memory)
+            verified_facts = self._storage.list_verified_facts(
+                user_id, since_date=(today - timedelta(days=21)).isoformat()
+            )
+            analysis = await self._analyst.analyze(
+                metrics, history=history, user_memory=user_memory,
+                verified_facts=verified_facts,
+            )
         finally:
             stop.set()
             with contextlib.suppress(Exception):
@@ -1920,10 +1926,14 @@ class GarminBot:
             workout_history = self._storage.get_history(
                 user_id, limit=6, sources=("workout", "qa")
             )
+            verified_facts = self._storage.list_verified_facts(
+                user_id, since_date=(today - timedelta(days=21)).isoformat()
+            )
             analysis = await self._analyst.analyze_workout(
                 activities, daily_metrics, history=workout_history,
                 user_memory=user_memory, plan_text=cached_plan,
                 week_type=cached_week_type,
+                verified_facts=verified_facts,
             )
         finally:
             stop.set()
@@ -2214,6 +2224,9 @@ class GarminBot:
 
             weight_kg = self._get_user_weight(user_id)
 
+            verified_facts = self._storage.list_verified_facts(
+                user_id, since_date=week_start,
+            )
             report = await self._analyst.analyze_weekly_summary(
                 metrics=metrics,
                 plan_text=plan_text,
@@ -2223,6 +2236,7 @@ class GarminBot:
                 garmin_daily_calories=garmin_week_cal,
                 weight_kg=weight_kg,
                 week_activities=week_activities,
+                verified_facts=verified_facts,
             )
         except Exception as exc:
             logger.exception("Error generating weekly summary")
