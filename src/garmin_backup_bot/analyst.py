@@ -185,7 +185,7 @@ class HealthAnalyst:
             raise last_exc
         raise RuntimeError("No Anthropic models configured")
 
-    async def analyze_workout(self, activities: list[dict[str, Any]], daily_metrics: dict[str, Any] | None, history: list[dict] | None = None, user_memory: str = "", plan_text: str = "", week_type: str = "", verified_facts: list[dict] | None = None) -> str:
+    async def analyze_workout(self, activities: list[dict[str, Any]], daily_metrics: dict[str, Any] | None, history: list[dict] | None = None, user_memory: str = "", plan_text: str = "", week_type: str = "", verified_facts: list[dict] | None = None, workout_facts: "Any" = None, week_facts: "Any" = None) -> str:
         """Analyze recent workouts and give training feedback."""
         if not activities:
             return "Нет данных о тренировках за последние 7 дней."
@@ -534,10 +534,19 @@ class HealthAnalyst:
         fp = (daily_metrics or {}).get("fitness_profile")
         gz = (daily_metrics or {}).get("garmin_zones")
         facts_block = self._format_verified_facts_block(verified_facts)
+        # Stage 2: пред-вычисленные факты тренировки и недели — Claude больше
+        # не считает зоны/каденс/GPS, он только описывает их человеческим языком.
+        coach_block = ""
+        if workout_facts is not None:
+            coach_block += "\n\n📐 WORKOUT FACTS (источник истины, считал не ты):\n"
+            coach_block += workout_facts.to_prompt_block()
+        if week_facts is not None:
+            coach_block += "\n\n📐 WEEK FACTS:\n" + week_facts.to_prompt_block()
         try:
             return await self._generate_text(
                 system_prompt=(
                     workout_system
+                    + coach_block
                     + (("\n" + facts_block) if facts_block else "")
                     + self._user_context_block(fp, garmin_zone_boundaries=gz)
                 ),

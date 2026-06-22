@@ -1929,11 +1929,27 @@ class GarminBot:
             verified_facts = self._storage.list_verified_facts(
                 user_id, since_date=(today - timedelta(days=21)).isoformat()
             )
+            # Stage 2: считаем факты в коде, не в промпте.
+            from . import coach as _coach
+            week_start_d = today - timedelta(days=today.weekday())
+            profile = self._storage.get_profile_override(user_id)
+            week_facts = _coach.compute_week_facts(
+                activities=activities,
+                week_start=week_start_d,
+                week_end=today,
+                plan_meta=cached_plan_meta,
+                profile=profile,
+            )
+            workout_facts = (
+                _coach.compute_workout_facts(activities[0]) if activities else None
+            )
             analysis = await self._analyst.analyze_workout(
                 activities, daily_metrics, history=workout_history,
                 user_memory=user_memory, plan_text=cached_plan,
                 week_type=cached_week_type,
                 verified_facts=verified_facts,
+                workout_facts=workout_facts,
+                week_facts=week_facts,
             )
         finally:
             stop.set()
