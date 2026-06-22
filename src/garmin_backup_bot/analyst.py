@@ -180,7 +180,7 @@ class HealthAnalyst:
             raise last_exc
         raise RuntimeError("No Anthropic models configured")
 
-    async def analyze_workout(self, activities: list[dict[str, Any]], daily_metrics: dict[str, Any] | None, history: list[dict] | None = None, user_memory: str = "", plan_text: str = "", week_type: str = "", verified_facts: list[dict] | None = None, workout_facts: "Any" = None, week_facts: "Any" = None) -> str:
+    async def analyze_workout(self, activities: list[dict[str, Any]], daily_metrics: dict[str, Any] | None, history: list[dict] | None = None, user_memory: str = "", plan_text: str = "", week_type: str = "", verified_facts: list[dict] | None = None, workout_facts: "Any" = None, week_facts: "Any" = None, today_iso: str | None = None) -> str:
         """Analyze recent workouts and give training feedback."""
         if not activities:
             return "Нет данных о тренировках за последние 7 дней."
@@ -348,7 +348,10 @@ class HealthAnalyst:
 
         # Calendar week summary — prevents Claude from using rolling 7d instead of Mon–today
         from datetime import date as _date, timedelta as _td
-        _today = _date.today()
+        # P0.3: используем TZ юзера (today_iso) если передан, иначе fallback на
+        # системную дату. Без этого OLD inline блок и NEW WEEK FACTS могли
+        # показывать разные суммы при смене суток у юзера в дальнем TZ.
+        _today = _date.fromisoformat(today_iso) if today_iso else _date.today()
         _cal_start = _today - _td(days=_today.weekday())  # Monday
         _cal_runs = [
             a for a in activities
@@ -2044,8 +2047,26 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                     if response.stop_reason == "tool_use":
                         tool_call_count += 1
                         if tool_call_count > 8:
-                            # Safety limit
-                            break
+                            # Лимит — но НЕ теряем диалог. Извлекаем текст из последнего
+                            # ответа Claude (если есть) или возвращаем стандартное
+                            # сообщение, чтобы юзер не получил RuntimeError при том,
+                            # что часть tool-вызовов могла уже записать в БД.
+                            logger.warning(
+                                "Tool-use loop reached safety limit (>%d). Returning partial.",
+                                8,
+                            )
+                            partial = [
+                                b.text for b in response.content
+                                if getattr(b, "type", "") == "text"
+                            ]
+                            partial_text = "\n".join(p for p in partial if p).strip()
+                            if partial_text:
+                                return partial_text
+                            return (
+                                "Я сделал много запросов к данным, но не успел собрать ответ "
+                                "за 8 итераций. Попробуй переформулировать вопрос точнее "
+                                "или сузить период."
+                            )
                         # Append assistant message with tool_use blocks
                         messages.append({"role": "assistant", "content": response.content})
                         # Execute each tool call
@@ -2092,7 +2113,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                                     "query_activities_db": "activities",
                                     "query_app_db": "app",
                                 }.get(block.name, "")
-                                sql_q = block.input.get("sql", "")
+                                sql_q = (block.input or {}).get("sql", "")
                                 result = _run_sql(db_key, sql_q)
                                 logger.info("Tool %s sql=%r result_len=%d preview=%r",
                                             block.name, sql_q, len(result), result[:200])
@@ -2112,7 +2133,20 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                                     "tool_use_id": block.id,
                                     "content": truncated_content,
                                 })
-                        messages.append({"role": "user", "content": tool_results})
+                        # Если по какой-то причине ни один tool_use блок не дал
+                        # результата — НЕ шлём пустой turn (запутает Claude и
+                        # тратит вызов). Выйдем из цикла и попробуем выдать текст.
+                        if tool_results:
+                            messages.append({"role": "user", "content": tool_results})
+                        else:
+                            logger.warning("tool_use stop_reason but tool_results empty — exiting loop")
+                            partial = [
+                                b.text for b in response.content
+                                if getattr(b, "type", "") == "text"
+                            ]
+                            return "\n".join(p for p in partial if p).strip() or (
+                                "Не удалось обработать запрос. Попробуй переформулировать."
+                            )
                     else:
                         # end_turn or max_tokens — extract text
                         text_parts = [

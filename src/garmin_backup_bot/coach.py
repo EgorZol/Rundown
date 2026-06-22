@@ -626,11 +626,31 @@ def compute_workout_facts(
 def compute_recovery_status(metrics: dict) -> RecoveryStatus:
     """Применяет пороги к метрикам утра и выдаёт сводный вердикт.
 
-    Логика порядка: alarm > poor > caution > good.
+    Логика порядка: alarm > poor > caution > good > no_data.
+    Если ни одного источника данных нет — возвращает no_data, чтобы LLM
+    не давал ложно-успокаивающий вердикт «всё отлично» свежим юзерам.
     """
     drivers: list[str] = []
     label = "good"
     safe_hard = True
+
+    # Проверяем, есть ли хоть какие-то источники данных. Если все ключевые
+    # поля пустые — это значит «утренняя сводка не подтянулась», не «всё ок».
+    has_data = any([
+        (metrics.get("sleep_last_night") or metrics.get("sleep")),
+        (metrics.get("resting_hr") or {}).get("last") is not None,
+        (metrics.get("body_battery") or {}).get("min") is not None,
+        (metrics.get("hrv") or {}).get("status"),
+        (metrics.get("fitness") or {}).get("tsb") is not None,
+        (metrics.get("fitness") or {}).get("acwr") is not None,
+        bool(metrics.get("feelings")),
+    ])
+    if not has_data:
+        return RecoveryStatus(
+            label="no_data",
+            drivers=["нет утренних метрик — синхронизация не подтянула sleep/RHR/BB/HRV"],
+            safe_to_train_hard=False,
+        )
 
     sleep = metrics.get("sleep_last_night") or metrics.get("sleep") or {}
     deep_h = _hours_from_minutes(sleep.get("deep_sleep_secs"))

@@ -1959,6 +1959,7 @@ class GarminBot:
                 verified_facts=verified_facts,
                 workout_facts=workout_facts,
                 week_facts=week_facts,
+                today_iso=today.isoformat(),
             )
         finally:
             stop.set()

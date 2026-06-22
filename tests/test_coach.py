@@ -347,8 +347,11 @@ class TestMorningFacts(unittest.TestCase):
         self.assertIn("16.6 км", mf.yesterday_brief)
 
     def test_morning_no_data(self):
+        # P0.5: пустой metrics НЕ должен давать ложно-успокаивающий "good"
         mf = coach.compute_morning_facts({}, today=date(2026, 6, 22))
-        self.assertEqual(mf.recovery.label, "good")  # ничего не нарушено → good
+        self.assertEqual(mf.recovery.label, "no_data")
+        self.assertFalse(mf.recovery.safe_to_train_hard)
+        self.assertTrue(any("синхронизация" in d for d in mf.recovery.drivers))
         self.assertIsNone(mf.sleep_total_h)
 
 

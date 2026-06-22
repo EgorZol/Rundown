@@ -11,6 +11,37 @@
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-06-22
+
+Patch — 5 P0 багов, найденных параллельным агентским аудитом (6 agents).
+
+### Fixed
+- **`analyst.py:_ask_with_tools`**: `block.input.get("sql", "")` мог упасть
+  AttributeError если Claude вернул `input=null`. Заменено на null-safe
+  `(block.input or {}).get(...)`.
+- **`analyst.py:_ask_with_tools`**: при превышении лимита 8 tool calls
+  цикл делал `break` → доходил до `raise RuntimeError("No models")`. Юзер
+  получал ошибку, хотя часть tool-вызовов уже отработала и записала в БД.
+  Теперь возвращаем partial text из последнего ответа Claude или
+  понятное сообщение «попробуй переформулировать», без crash.
+- **`analyst.py:analyze_workout`**: OLD inline блок `[ИТОГО НЕДЕЛЯ]`
+  считал от системной даты (`date.today()`), а WEEK FACTS — от TZ юзера.
+  У юзеров в дальнем TZ на стыке суток два блока в одном промпте
+  показывали разные суммы км. Теперь `today_iso` пробрасывается из
+  bot.handle_workout, оба блока выровнены.
+- **`analyst.py:_ask_with_tools`**: если в response stop_reason=tool_use,
+  но при обработке не получилось ни одного tool_result — раньше
+  пустой `[]` всё равно append'ился как user-turn, путая Claude.
+  Теперь guard: выходим из цикла и возвращаем что есть.
+- **`coach.compute_recovery_status({})`**: пустой metrics возвращал
+  `label="good", safe_to_train_hard=True` — ложно-успокаивающий вердикт
+  свежим юзерам без синхронизации. Теперь при отсутствии источников
+  данных возвращает `label="no_data", safe_to_train_hard=False` с
+  drivers=["нет утренних метрик — синхронизация не подтянула …"].
+
+### Tests
+- 32/32 проходят. `test_morning_no_data` обновлён под новое поведение.
+
 ## [0.4.0] — 2026-06-22
 
 Большой архитектурный рефакторинг: «расчёты → код, решения → LLM, факты → БД».
