@@ -429,24 +429,6 @@ class Storage:
                 (user_id, event_name, now_iso),
             )
 
-    def is_summary_sent(self, user_id: int, summary_date: date_type) -> bool:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT 1 FROM daily_summaries_sent WHERE user_id = ? AND summary_date = ?",
-                (user_id, summary_date.isoformat()),
-            ).fetchone()
-        return row is not None
-
-    def mark_summary_sent(self, user_id: int, summary_date: date_type) -> None:
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO daily_summaries_sent (user_id, summary_date, sent_at)
-                VALUES (?, ?, ?)
-                """,
-                (user_id, summary_date.isoformat(), datetime.now(timezone.utc).isoformat()),
-            )
-
     def add_message(self, user_id: int, role: str, content: str, source: str, keep_last: int = 60) -> None:
         """Save a conversation message and trim old ones beyond keep_last.
 
@@ -627,14 +609,6 @@ class Storage:
         items = self.list_memory_items(user_id)
         return "\n".join(f"#{it['id']}. {it['content']}" for it in items)
 
-    def set_user_memory(self, user_id: int, notes: str) -> None:
-        """Полностью заменить заметки (используется при миграции и /forget all)."""
-        self.clear_user_memory(user_id)
-        for raw_line in (notes or "").split("\n"):
-            line = raw_line.strip()
-            if line:
-                self.add_memory_item(user_id, line)
-
     def get_plan(self, user_id: int, week_start: str) -> tuple[str, str] | None:
         """Return (plan_text, generated_at_iso) or None."""
         with self._connect() as conn:
@@ -814,15 +788,6 @@ class Storage:
             {"id": r[0], "fact_date": r[1], "fact_text": r[2], "created_at": r[3]}
             for r in rows
         ]
-
-    def delete_verified_fact(self, user_id: int, fact_id: int) -> bool:
-        with self._connect() as conn:
-            cur = conn.execute(
-                "UPDATE verified_facts SET is_active = 0 "
-                "WHERE id = ? AND user_id = ? AND is_active = 1",
-                (fact_id, user_id),
-            )
-            return cur.rowcount > 0
 
     def set_race_result(
         self, user_id: int, race_id: int, actual_time: str | None,

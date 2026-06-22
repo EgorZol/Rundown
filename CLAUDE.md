@@ -61,7 +61,7 @@ src/garmin_backup_bot/
 - `filters.PHOTO` и `filters.VOICE` не конфликтуют с `filters.TEXT` — разные типы сообщений
 - Awaiting-состояния через `context.user_data["awaiting"]` — food, food_edit, weight, lthr, timezone, profile и др.
 - `MAIN_KEYBOARD` — ReplyKeyboardMarkup, отправляется с каждым ответом
-- **Длинные сообщения** (>4000 chars): Telegram отсекает на 4096 → используй `self._split(text)` + цикл `reply_text` ИЛИ `await self._send_long(message, text, reply_markup=MAIN_KEYBOARD)`. Splitter режет по `\n\n` (абзацы) → `\n` (строки) → hard slice. Уже подключён ко всем «длинным» хендлерам (план/спорт/утро/Q&A/тренировка). Новые хендлеры с Claude-ответом — обязательно через splitter
+- **Длинные сообщения** (>4000 chars): Telegram отсекает на 4096 → используй `self._split(text)` + цикл `reply_text(chunk, reply_markup=MAIN_KEYBOARD)`. Splitter режет по `\n\n` (абзацы) → `\n` (строки) → hard slice. Подключён ко всем «длинным» хендлерам (план/спорт/утро/Q&A/тренировка). Новые хендлеры с Claude-ответом — обязательно через `self._split()`
 
 ### Claude API (analyst.py, nutrition.py, plan_builder.py)
 - Всегда retry с fallback-моделями — паттерн из `analyst.py:_generate_text()`

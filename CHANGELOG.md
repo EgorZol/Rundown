@@ -11,6 +11,48 @@
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-22
+
+Hygiene release: чистка dead code, освобождение диска, ежедневный бэкап БД.
+
+### Added
+- **Ежедневный бэкап `data/app.db`** через systemd-user timer (03:00 + рандом ±5 мин).
+  WAL-safe (sqlite3 `.backup`), ротация 14 дней, складывает в `data/backups/`.
+  Unit-файлы в `deploy/systemd/garmin-backup-db.{service,timer}`,
+  скрипт `scripts/backup_app_db.sh`.
+- `data/archive/` — куда переехали archived `garmin_monitoring.db` (189 МБ суммарно).
+
+### Changed
+- **Удалён весь legacy GarminDB CLI код** (после garth-миграции v0.1.x).
+  В `garmin_service.py` ушли: `run_backup`, `has_sleep_data_for_date`,
+  `_scrub_password`, `_nice_prefix`, `_build_command`, `_write_garmindb_config`,
+  `_default_garmindb_start_date`, поле `_sync_cmd_template`. Импорты `shlex`,
+  `shutil`, `subprocess`, `sys` тоже удалены — стали сиротами.
+- `GarminService.__init__` больше не требует `sync_cmd_template`.
+- `Settings.garmin_db_sync_cmd` удалён. `GARMIN_DB_SYNC_CMD` в .env теперь
+  не требуется (можно безопасно удалить из вашего .env).
+- В `analyst.SYSTEM_PROMPT` (morning) удалена строка про оценку питания —
+  в утренний отчёт питание не приходит, правило вводило Claude в заблуждение.
+- CLAUDE.md: обновлена документация про длинные сообщения (убрана ссылка на
+  удалённый `_send_long`).
+
+### Removed (dead code)
+- `Storage.set_user_memory` — заменён `add_memory_item`/`clear_user_memory`.
+- `Storage.is_summary_sent`, `Storage.mark_summary_sent` — сироты.
+- `Storage.delete_verified_fact` — не был подключён к хендлеру.
+- `GarminBot._send_long` — все длинные хендлеры используют `_split()`.
+- `HealthAnalyst._fmt_zone_times` — продублирован в `_format_activities`.
+
+### Storage
+- **`data/users/*/DBs/garmin_monitoring.db`** ×3 = 189 МБ перемещены в
+  `data/archive/` (бот их не использует после garth-миграции). Если когда-то
+  понадобятся поминутные HR/RR/PulseOx — данные сохранены, не удалены.
+
+### Notes
+- NutritionStatus dataclass в coach.py НЕ добавлен в этом релизе. Питание
+  уже агрегируется кодом перед отправкой Claude в weekly_summary, дополнительный
+  dataclass был бы over-engineering. Отложено на v0.6.0 если появится явная боль.
+
 ## [0.4.1] — 2026-06-22
 
 Patch — 5 P0 багов, найденных параллельным агентским аудитом (6 agents).

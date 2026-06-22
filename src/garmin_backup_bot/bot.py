@@ -218,14 +218,6 @@ def _classify_bad_memory(note: str) -> str | None:
 class GarminBot:
     _MAX_MSG_LEN = 4000
 
-    async def _send_long(self, message, text: str, **kwargs) -> None:
-        """reply_text с авто-разбиением >_MAX_MSG_LEN. reply_markup идёт только на последний чанк."""
-        chunks = self._split(text, self._MAX_MSG_LEN)
-        last = len(chunks) - 1
-        kw_no_markup = {k: v for k, v in kwargs.items() if k != "reply_markup"}
-        for i, chunk in enumerate(chunks):
-            await message.reply_text(chunk, **(kwargs if i == last else kw_no_markup))
-
     def __init__(
         self,
         app: Application,

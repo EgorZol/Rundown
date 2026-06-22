@@ -1,0 +1,16 @@
+[Unit]
+Description=Daily backup of garmin bot app.db (sqlite .backup)
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/evg/garmin-analysis-and-backup
+ExecStart=/home/evg/garmin-analysis-and-backup/scripts/backup_app_db.sh
+StandardOutput=journal
+StandardError=journal
+# Базовый sandboxing (бэкап — read source, write only под BACKUP_DIR)
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/evg/garmin-analysis-and-backup/data
+NoNewPrivileges=yes

@@ -4,10 +4,6 @@ import json
 import logging
 import os
 import sqlite3
-import shlex
-import shutil
-import subprocess
-import sys
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -43,8 +39,7 @@ class SyncSummary:
 
 
 class GarminService:
-    def __init__(self, sync_cmd_template: str, workdir_root: Path, exports_dir: Path) -> None:
-        self._sync_cmd_template = sync_cmd_template
+    def __init__(self, workdir_root: Path, exports_dir: Path) -> None:
         self._workdir_root = workdir_root
         self._exports_dir = exports_dir
         self._workdir_root.mkdir(parents=True, exist_ok=True)
@@ -819,37 +814,6 @@ class GarminService:
         self._refresh_user_analytics_db(user_id=user_id, output_dir=output_dir)
         return BackupResult(output_dir=output_dir)
 
-    def run_backup(self, user_id: int, username: str, password: str, start_date: date | None = None) -> BackupResult:
-        """Run full backup (both health and activity history) in pure Python."""
-        output_dir = (self._workdir_root / str(user_id)).resolve()
-        output_dir.mkdir(parents=True, exist_ok=True)
-        self._init_user_dbs(user_id)
-        
-        # We temporarily set the start date environment variable if provided
-        if start_date:
-            os.environ["GARMIN_START_DATE"] = start_date.isoformat()
-            
-        try:
-            logger.info("Starting full backup for user %d...", user_id)
-            self.run_health_sync(user_id, username, password)
-            self.run_activity_sync(user_id, username, password)
-        finally:
-            if start_date and "GARMIN_START_DATE" in os.environ:
-                del os.environ["GARMIN_START_DATE"]
-                
-        return BackupResult(output_dir=output_dir)
-
-    def has_sleep_data_for_date(self, user_id: int, target_date: date) -> bool:
-        garmin_db = self._garmin_db_path(user_id, "garmin.db")
-        if not garmin_db:
-            return False
-        with sqlite3.connect(garmin_db, timeout=5) as conn:
-            row = conn.execute(
-                "SELECT 1 FROM sleep WHERE day = ? LIMIT 1",
-                (target_date.isoformat(),),
-            ).fetchone()
-        return row is not None
-
     def collect_daily_metrics(self, user_id: int, target_date: date) -> dict[str, Any] | None:
         garmin_db = self._garmin_db_path(user_id, "garmin.db")
         if not garmin_db:
@@ -1499,128 +1463,6 @@ class GarminService:
                 "avg_cadence": avg_cad,
             })
         return splits
-
-    @staticmethod
-    def _scrub_password(config_path: Path) -> None:
-        """Remove plaintext password from GarminConnectConfig.json after sync."""
-        try:
-            if not config_path.exists():
-                return
-            with config_path.open("r", encoding="utf-8") as fp:
-                data = json.load(fp)
-            creds = data.get("credentials", {})
-            if creds.get("password"):
-                creds["password"] = None
-                with config_path.open("w", encoding="utf-8") as fp:
-                    json.dump(data, fp, ensure_ascii=True, indent=2)
-        except Exception as exc:
-            logger.warning("Failed to scrub password from config: %s", exc)
-
-    @staticmethod
-    def _nice_prefix() -> list[str]:
-        """Префикс запуска тяжёлого синка с низким приоритетом CPU и диска.
-        На 2-ядерном VPS garmindb без этого голодал бота и остальные сервисы."""
-        prefix: list[str] = []
-        nice = shutil.which("nice")
-        if nice:
-            prefix += [nice, "-n", "19"]      # минимальный CPU-приоритет
-        ionice = shutil.which("ionice")
-        if ionice:
-            prefix += [ionice, "-c", "3"]     # idle-класс дискового I/O
-        return prefix
-
-    def _build_command(self, username: str, output_dir: Path, config_dir: Path) -> list[str]:
-        formatted = self._sync_cmd_template.format(
-            username=username,
-            output_dir=str(output_dir),
-            config_dir=str(config_dir),
-        )
-        cmd = shlex.split(formatted)
-        if not cmd:
-            raise RuntimeError("Empty GarminDB sync command (GARMIN_DB_SYNC_CMD).")
-
-        # systemd services often don't include venv bin dir in PATH. If the command is a bare
-        # filename (e.g. garmindb_cli.py), resolve it next to the current interpreter.
-        program = cmd[0]
-        if "/" not in program and "\\" not in program:
-            if shutil.which(program) is None:
-                # Don't use .resolve() here: venv python is often a symlink to /usr/bin/python3.
-                # We want the venv's bin dir, not the resolved system python dir.
-                venv_bin = Path(sys.executable).parent
-                candidate = venv_bin / program
-                if candidate.exists():
-                    # Execute the script via the current interpreter to avoid shebang issues.
-                    cmd = [sys.executable, str(candidate), *cmd[1:]]
-        # Низкий приоритет CPU/IO — чтобы синк не душил бота и соседние сервисы.
-        return [*self._nice_prefix(), *cmd]
-
-    def _write_garmindb_config(
-        self,
-        config_dir: Path,
-        output_dir: Path,
-        username: str,
-        password: str,
-        start_date: date | None,
-    ) -> None:
-        start_dt = self._default_garmindb_start_date()
-        start_day = start_date or start_dt.date()
-        start_date_s = start_day.strftime("%m/%d/%Y")
-        config_path = config_dir / "GarminConnectConfig.json"
-        payload = {
-            "db": {"type": "sqlite"},
-            "garmin": {"domain": "garmin.com"},
-            "credentials": {
-                "user": username,
-                "secure_password": False,
-                "password": password,
-                "password_file": None,
-            },
-            "data": {
-                "weight_start_date": start_date_s,
-                "sleep_start_date": start_date_s,
-                "rhr_start_date": start_date_s,
-                "monitoring_start_date": start_date_s,
-                "download_latest_activities": 20,
-                "download_all_activities": 20,
-                "download_days_overlap": 3,
-            },
-            "directories": {
-                "relative_to_home": False,
-                "base_dir": str(output_dir),
-                "mount_dir": "/Volumes/GARMIN",
-            },
-            "enabled_stats": {
-                "monitoring": True,
-                "steps": True,
-                "itime": True,
-                "sleep": True,
-                "rhr": True,
-                "weight": True,
-                "activities": True,
-            },
-            "course_views": {"steps": []},
-            "modes": {},
-            "activities": {"display": []},
-            "settings": {
-                "metric": False,
-                "default_display_activities": ["walking", "running", "cycling"],
-            },
-            "checkup": {"look_back_days": 90},
-        }
-        with config_path.open("w", encoding="utf-8") as fp:
-            json.dump(payload, fp, ensure_ascii=True, indent=2)
-        config_path.chmod(0o600)  # owner-only read/write
-
-    def _default_garmindb_start_date(self) -> datetime:
-        # GarminDB expects MM/DD/YYYY in config. We accept GARMIN_START_DATE=YYYY-MM-DD.
-        raw = (os.getenv("GARMIN_START_DATE", "") or "").strip()
-        if raw:
-            try:
-                return datetime.strptime(raw, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-            except ValueError:
-                pass
-        # Default: ~1 year back is a good tradeoff for initial sync, but can be overridden.
-        return datetime.now(timezone.utc) - timedelta(days=365)
 
     def _analytics_db_path_for_user(self, user_id: int) -> Path:
         return self._workdir_root / str(user_id) / "CoachData" / "coach_metrics.db"

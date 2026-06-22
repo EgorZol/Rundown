@@ -31,7 +31,6 @@ def main() -> None:
     storage = Storage(settings.db_path)
     box = SecretBox(settings.encryption_key)
     service = GarminService(
-        sync_cmd_template=settings.garmin_db_sync_cmd,
         workdir_root=settings.garmin_workdir_root,
         exports_dir=settings.exports_dir,
     )

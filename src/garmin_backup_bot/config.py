@@ -12,7 +12,6 @@ class Settings:
     db_path: Path
     exports_dir: Path
     garmin_workdir_root: Path
-    garmin_db_sync_cmd: str
     webapp_base_url: str | None
     webapp_token_ttl_seconds: int
     admin_user_ids: set[int]
@@ -38,7 +37,9 @@ def load_settings() -> Settings:
     db_path = Path(os.getenv("DB_PATH", "./data/app.db")).expanduser()
     exports_dir = Path(os.getenv("EXPORTS_DIR", "./exports")).expanduser()
     workdir_root = Path(os.getenv("GARMIN_WORKDIR_ROOT", "./data/users")).expanduser()
-    sync_cmd = os.getenv("GARMIN_DB_SYNC_CMD", "").strip()
+    # GARMIN_DB_SYNC_CMD больше не используется (после garth-миграции). Принимаем
+    # из .env для backward-compat, но не валидируем — оставлен для будущих юзеров,
+    # у которых ENV всё ещё содержит этот ключ. Можно безопасно удалить из .env.
     webapp_base_url = os.getenv("WEBAPP_BASE_URL", "").strip() or None
     webapp_token_ttl_seconds = int(os.getenv("WEBAPP_TOKEN_TTL_SECONDS", "900"))
     admin_user_ids_raw = os.getenv("ADMIN_USER_IDS", "").strip()
@@ -53,9 +54,6 @@ def load_settings() -> Settings:
             except ValueError:
                 # Некорректный id в ADMIN_USER_IDS не должен ронять старт бота.
                 print(f"config: пропускаю некорректный ADMIN_USER_IDS={value!r}", file=__import__("sys").stderr)
-
-    if not sync_cmd:
-        raise RuntimeError("GARMIN_DB_SYNC_CMD is required")
 
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not anthropic_api_key:
@@ -82,7 +80,6 @@ def load_settings() -> Settings:
         db_path=db_path,
         exports_dir=exports_dir,
         garmin_workdir_root=workdir_root,
-        garmin_db_sync_cmd=sync_cmd,
         webapp_base_url=webapp_base_url,
         webapp_token_ttl_seconds=webapp_token_ttl_seconds,
         admin_user_ids=admin_user_ids,
