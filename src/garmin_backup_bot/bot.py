@@ -265,6 +265,10 @@ class GarminBot:
         # ограничение нужно только чтобы не упереться в Garmin rate-limit с одного IP.
         # Per-user защита от двойного синка одного юзера — в _sync_locks выше.
         self._global_sync_sem = asyncio.Semaphore(5)
+        # Первичный синк нового юзера (~365 дней, сотни запросов) — строго
+        # по одному на весь бот: несколько параллельных первичных синков
+        # с одного IP — почти гарантированный 429/бан от Garmin.
+        self._initial_sync_sem = asyncio.Semaphore(1)
         self._register_handlers()
         self._schedule_reminders()
 
@@ -273,6 +277,15 @@ class GarminBot:
         if user_id not in self._sync_locks:
             self._sync_locks[user_id] = asyncio.Lock()
         return self._sync_locks[user_id]
+
+    def _sync_sem_for(self, user_id: int) -> asyncio.Semaphore:
+        """Семафор для синка: первичный — сериализуем, инкрементальный — до 5."""
+        try:
+            if self._service.is_initial_sync_pending(user_id):
+                return self._initial_sync_sem
+        except Exception:
+            pass
+        return self._global_sync_sem
 
     def _get_metrics(self, user_id: int, today, yesterday=None) -> dict | None:
         """Collect daily metrics and apply manual profile overrides (LTHR, weight)."""
@@ -1731,9 +1744,10 @@ class GarminBot:
         try:
             async with lock:
                 password = self._box.decrypt(creds.password_encrypted)
+                sync_sem = self._sync_sem_for(user_id)
                 sync_exc: Exception | None = None
                 try:
-                    async with self._global_sync_sem:
+                    async with sync_sem:
                         await asyncio.to_thread(
                             self._service.run_health_sync,
                             user_id=user_id,
@@ -1749,7 +1763,7 @@ class GarminBot:
                 # говорит «пробежек не было», если вчерашняя пробёжка ещё
                 # не подтянулась до morning (см. жалобу Алины #7).
                 try:
-                    async with self._global_sync_sem:
+                    async with sync_sem:
                         await asyncio.to_thread(
                             self._service.run_activity_sync,
                             user_id=user_id,
@@ -1891,7 +1905,7 @@ class GarminBot:
                 password = self._box.decrypt(creds.password_encrypted)
                 sync_exc: Exception | None = None
                 try:
-                    async with self._global_sync_sem:
+                    async with self._sync_sem_for(user_id):
                         await asyncio.to_thread(
                             self._service.run_activity_sync,
                             user_id=user_id,
@@ -2048,7 +2062,7 @@ class GarminBot:
                 password = self._box.decrypt(creds.password_encrypted)
                 # Sync activities so the plan sees the latest workouts
                 try:
-                    async with self._global_sync_sem:
+                    async with self._sync_sem_for(user_id):
                         await asyncio.to_thread(
                             self._service.run_activity_sync,
                             user_id=user_id,

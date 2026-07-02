@@ -307,25 +307,28 @@ class GarminService:
                 """
             )
 
+    def is_initial_sync_pending(self, user_id: int) -> bool:
+        """True, если у юзера ещё не было health-синка (garmin.db пуст).
+
+        Первичный синк тяжёлый (~365 дней, сотни HTTP-запросов к Garmin) —
+        bot.py пускает такие строго по одному, чтобы не словить 429/бан IP.
+        """
+        garmin_db = self._workdir_root / str(user_id) / "DBs" / "garmin.db"
+        if not garmin_db.exists():
+            return True
+        try:
+            with sqlite3.connect(garmin_db, timeout=5) as conn:
+                row = conn.execute("SELECT COUNT(*) FROM sleep").fetchone()
+                return not (row and row[0] > 0)
+        except Exception:
+            return True
+
     def _get_sync_range(self, user_id: int) -> tuple[date, date]:
         """Determine sync start and end dates.
         Initial sync uses GARMIN_START_DATE env, incremental uses last 14 days."""
         today = date.today()
-        dbs_dir = self._workdir_root / str(user_id) / "DBs"
-        garmin_db = dbs_dir / "garmin.db"
-        
-        # Check if DB has data
-        has_data = False
-        if garmin_db.exists():
-            try:
-                with sqlite3.connect(garmin_db, timeout=5) as conn:
-                    row = conn.execute("SELECT COUNT(*) FROM sleep").fetchone()
-                    if row and row[0] > 0:
-                        has_data = True
-            except Exception:
-                pass
-                
-        if has_data:
+
+        if not self.is_initial_sync_pending(user_id):
             start_date = today - timedelta(days=14)
             logger.info("Incremental sync: syncing last 14 days (%s to %s)", start_date, today)
             return start_date, today
