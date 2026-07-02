@@ -31,24 +31,24 @@ from .transcription import Transcriber
 logger = logging.getLogger(__name__)
 
 BTN_MORNING = "🌅 Утро"
-BTN_WORKOUT = "🏃 Разбор пробежки"
+BTN_WORKOUT = "🏃 Разбор"
 BTN_PLAN = "📅 План"
-BTN_SPORT = "🏅 Форма за 4 недели"
+BTN_SPORT = "🏅 Форма"
 BTN_GOAL = "🎯 Моя цель"
 BTN_MEMORY = "🧠 Заметки"
 BTN_STATUS = "📊 Статус"
 BTN_CALORIES = "🔥 Калории"
 BTN_RACE = "🏁 Старты"
 BTN_PROGRESS = "📈 Прогресс"
-BTN_WEEKLY = "📋 Итог недели"
+BTN_WEEKLY = "📋 Итоги"
 BTN_RECORDS = "🏆 Рекорды"
 BTN_WEIGHT = "⚖️ Вес"
 BTN_LTHR = "💓 LTHR (порог)"
-BTN_TIMEZONE = "🕐 Часовой пояс"
+BTN_TIMEZONE = "🕐 Часы"
 BTN_EXPERIENCE = "🏃 Стаж"
 BTN_PROFILE = "📋 Профиль"
-BTN_FOOD = "🍽 Записать еду"
-BTN_FOOD_REPORT = "📊 Питание за день"
+BTN_FOOD = "🍽 Еда"
+BTN_FOOD_REPORT = "📊 Питание"
 
 # Profile questionnaire: ordered list of (field_name, question_text, awaiting_key)
 # All questions support "далее" / "-" to skip.
@@ -131,14 +131,14 @@ def _api_error_msg(exc: Exception, action: str = "операция") -> str:
 # Сохранение их «навсегда» приводит к расхождению с реальной БД и к тому,
 # что Claude видит две разные цели/гонки одновременно.
 _BAD_MEMORY_PATTERNS: list[tuple[str, str]] = [
-    (r"(?i)\bцел[ьи][\s—:\-—]", "это похоже на цель — используй /goal"),
+    (r"(?i)\bцел[ьи][\s—:\-—]", "это похоже на цель — просто скажи мне словами «моя цель — …»"),
     (r"(?i)\bплан\s+(?:на|недел|трениров)", "это похоже на план — используй кнопку 📅 План"),
     (r"(?i)\b(?:марафон|полумарафон|забег|старт|гонка)\b.{0,40}\d{1,2}[./\-]\d{1,2}",
-     "гонка с датой — заведи через /race add"),
-    (r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", "конкретная дата — используй /race или /goal"),
+     "гонка с датой — скажи мне «добавь забег <название> <дата>»"),
+    (r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", "конкретная дата — скажи мне словами что это (гонка, цель и т.п.)"),
     (r"(?i)\bLTHR\s*[:=]?\s*\d{2,3}\b", "LTHR — используй кнопку 💓 LTHR"),
     (r"(?i)\bвес\s*[:=]?\s*\d{2,3}(?:[.,]\d)?\s*кг", "вес — используй кнопку ⚖ Вес"),
-    (r"(?i)\bчасовой\s+пояс\b", "часовой пояс — команда /tz"),
+    (r"(?i)\bчасовой\s+пояс\b", "часовой пояс — используй кнопку 🕐 Часы"),
 ]
 
 
@@ -200,6 +200,17 @@ def _parse_expiry(text: str, today: date | None = None) -> str | None:
     if s in ("через месяц",):
         return (today + timedelta(days=30)).isoformat()
     return None
+
+
+_PR_LABEL_TO_KM = {
+    "1 км": 1.0, "5 км": 5.0, "10 км": 10.0, "15 км": 15.0,
+    "Полумарафон": 21.1, "Марафон": 42.2,
+}
+
+
+def _label_to_km(label: str) -> float:
+    """Map PR bucket label → canonical distance in km (для сравнения с факт. дистанцией)."""
+    return _PR_LABEL_TO_KM.get(label.strip(), 0.0)
 
 
 def _classify_bad_memory(note: str) -> str | None:
@@ -550,29 +561,36 @@ class GarminBot:
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._track_event(update, "start")
+        user_id = update.effective_user.id
+        has_garmin = self._storage.get_credentials(user_id) is not None
+
         text = (
-            "Привет! Я твой персональный тренер по бегу.\n"
-            "Анализирую данные с Garmin и составляю индивидуальный план.\n\n"
-            "Чтобы начать, нужно 3 шага:\n\n"
-            "1. Подключи Garmin \u2014 /link_garmin\n"
-            "   Мне нужен доступ к твоим тренировкам, пульсу и сну\n\n"
-            f"2. Заполни профиль \u2014 {BTN_PROFILE}\n"
-            "   Пол, стаж, доступные дни, ограничения по времени, травмы\n\n"
-            f"3. Поставь цель \u2014 {BTN_GOAL}\n"
-            "   Например: \xabполумарафон из 1:45\xbb или \xabбегать 3 раза в неделю\xbb\n\n"
-            f"После этого жми {BTN_PLAN} \u2014 и получишь первый недельный план.\n"
-            "План учитывает твою форму, нагрузку, сон, пульс и цель.\n"
-            "Обновляй его хоть каждый день \u2014 он подстраивается под факт.\n\n"
-            "Каждое утро:\n"
-            f"  {BTN_MORNING} \u2014 брифинг: как восстановился + задание на сегодня\n\n"
-            "После пробежки:\n"
-            f"  {BTN_WORKOUT} \u2014 разбор: зоны, сплиты, cardiac drift, рекомендации\n\n"
-            "Можешь просто написать любой вопрос \u2014 я отвечу на основе твоих данных.\n"
-            "Например: \xabпочему у меня пульс вырос?\xbb, \xabготов ли я к полумарафону?\xbb,\n"
-            "\xabсравни мои последние две длинные\xbb \u2014 я знаю всю твою историю."
+            "Привет! Я твой AI-тренер по бегу.\n"
+            "Анализирую данные с Garmin и веду твою подготовку.\n\n"
+            "💬 Просто пиши как живому человеку:\n"
+            "  «вчера пробежал 10км за 49:52»\n"
+            "  «болит колено неделю»\n"
+            "  «составь план на неделю»\n"
+            "  «сколько я пробежал за месяц?»\n"
+            "  «чем сегодня заняться?»\n\n"
+            "📝 Или используй кнопки ниже — готовые сценарии:\n"
+            f"  {BTN_MORNING} — брифинг после сна\n"
+            f"  {BTN_WORKOUT} — анализ пробежки\n"
+            f"  {BTN_PLAN} — план на неделю\n"
+            f"  {BTN_WEEKLY} — разбор недели\n"
+            f"  {BTN_FOOD} — записать приём пищи\n\n"
+            "Я помню всю твою историю: тренировки, сон, форму, цели.\n"
+            "Если я ошибусь — просто поправь словами, я запомню."
         )
         await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
-        if self._webapp_base_url:
+        # Если Garmin ещё не привязан — отдельным сообщением показываем
+        # кнопку подключения через WebApp. Это единственное место в боте,
+        # где разговорный путь невозможен (нужна веб-форма для логина).
+        if not has_garmin and self._webapp_base_url:
+            await update.message.reply_text(
+                "👉 Сначала подключи Garmin — нажми кнопку ниже:",
+                reply_markup=MAIN_KEYBOARD,
+            )
             await self._send_webapp_button(update, context)
 
     async def link_garmin(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -590,7 +608,7 @@ class GarminBot:
         creds = self._storage.get_credentials(user_id)
         if not creds:
             await update.message.reply_text(
-                f"Garmin не подключён. Используй /link_garmin\n\nверсия бота: v{_bot_version}",
+                f"Garmin ещё не подключён. Нажми /start — я подскажу как.\n\nверсия бота: v{_bot_version}",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -629,21 +647,19 @@ class GarminBot:
         note = " ".join(args).strip()
         if not note:
             await update.message.reply_text(
-                "Использование: /remember <заметка>\n"
-                "                /remember --until <дата> <заметка>\n\n"
-                "Примеры:\n"
-                "/remember Не переношу жару\n"
-                "/remember Бегаю утром, не вечером\n"
-                "/remember --until 2026-07-05 Курс антибиотиков — без Z4/Z5\n"
-                "/remember --until через 14 дней Восстанавливаю колено\n\n"
-                "⚠️ Цели и гонки — через /goal и /race.",
+                "💬 Проще всего — просто скажи мне обычным текстом:\n"
+                "  «не переношу жару»\n"
+                "  «бегаю утром, не вечером»\n"
+                "  «у меня антибиотики 14 дней»\n"
+                "  «болит колено, исключи прыжки»\n\n"
+                "Я сам пойму намерение и сохраню.",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
         bad_reason = _classify_bad_memory(note)
         if bad_reason:
             await update.message.reply_text(
-                f"Не сохранил — {bad_reason}\n\nИспользуй структурную команду.",
+                f"Не сохранил — {bad_reason}",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -668,9 +684,10 @@ class GarminBot:
         if not items:
             await update.message.reply_text(
                 "Заметок пока нет.\n\n"
-                "Добавь: /remember <текст>\n"
-                "Удалить одну: /forget <N>\n"
-                "Удалить все: /forget all",
+                "💬 Просто скажи мне обычным текстом — я запомню:\n"
+                "  «не переношу жару»\n"
+                "  «болит колено, исключи прыжки»\n"
+                "  «у меня антибиотики 14 дней» (сам поставлю срок)",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -683,17 +700,16 @@ class GarminBot:
             exp = f" ⏳ до {it['expires_at']}" if it.get("expires_at") else ""
             lines.append(f"#{it['id']}. {it['content']}{exp}")
         lines.append("")
-        lines.append("Удалить одну: /forget <N>  ·  Все: /forget all")
+        lines.append("💬 Чтобы убрать — просто скажи: «забудь про X» или «забудь #N».")
         await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
 
     async def forget_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Удалить одну заметку (/forget <N>) или все (/forget all)."""
+        """Удалить заметку. Power-user команда; обычный способ — сказать словами."""
         user_id = update.effective_user.id
         args = context.args or []
         if not args:
             await update.message.reply_text(
-                "Использование:\n/forget <N> — удалить заметку #N\n/forget all — удалить все\n\n"
-                "Список с номерами: /memory",
+                "💬 Просто скажи мне словами: «забудь про антибиотики», «забудь #3», «забудь всё».",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -708,7 +724,7 @@ class GarminBot:
             item_id = int(token.lstrip("#"))
         except ValueError:
             await update.message.reply_text(
-                "Не понял номер. Пример: /forget 3 или /forget all",
+                "Не понял номер. Скажи словами «забудь про X» — я найду.",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -716,7 +732,7 @@ class GarminBot:
             await self._show_memory_list(update, user_id, header=f"Удалил #{item_id}.")
         else:
             await update.message.reply_text(
-                f"Заметки #{item_id} не нашёл (возможно уже удалена). /memory — актуальный список.",
+                f"Заметку #{item_id} не нашёл (возможно уже удалена).",
                 reply_markup=MAIN_KEYBOARD,
             )
 
@@ -727,10 +743,13 @@ class GarminBot:
         if not args:
             current = self._storage.get_goal(user_id)
             if current:
-                await update.message.reply_text(f"Твоя текущая цель:\n{current}\n\nЧтобы изменить: /goal [новая цель]", reply_markup=MAIN_KEYBOARD)
+                await update.message.reply_text(
+                    f"Твоя текущая цель:\n{current}\n\n💬 Чтобы поменять — просто скажи: «новая цель — …»",
+                    reply_markup=MAIN_KEYBOARD,
+                )
             else:
                 await update.message.reply_text(
-                    "Цель не задана.\n\nПример: /goal Марафон в Берлине 28.09.2026, целевое время 3:30, сейчас 40 км/нед",
+                    "Цель не задана.\n\n💬 Скажи мне словами:\n  «полумарафон Берлин 28.09, цель 1:45»\n  «бегать 3 раза в неделю»\n  «похудеть на 5кг к лету»",
                     reply_markup=MAIN_KEYBOARD,
                 )
             return
@@ -794,18 +813,20 @@ class GarminBot:
         return added
 
     async def handle_goal_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Button handler: show current goal and instructions to change it."""
+        """Button handler: show current goal and how to change it conversationally."""
         user_id = update.effective_user.id
         current = self._storage.get_goal(user_id)
         if current:
             await update.message.reply_text(
-                f"Твоя цель:\n{current}\n\nЧтобы изменить — напиши:\n/goal [новая цель]",
+                f"Твоя цель:\n{current}\n\n💬 Чтобы поменять — просто скажи: «новая цель — …»",
                 reply_markup=MAIN_KEYBOARD,
             )
         else:
             await update.message.reply_text(
-                "Цель не задана. Задай командой:\n/goal [описание]\n\n"
-                "Например:\n/goal Марафон в Берлине 28.09.2026, целевое время 3:30",
+                "Цель не задана.\n\n💬 Скажи мне словами:\n"
+                "  «полумарафон Берлин 28.09, цель 1:45»\n"
+                "  «бегать 3 раза в неделю»\n"
+                "  «похудеть на 5 кг к лету»",
                 reply_markup=MAIN_KEYBOARD,
             )
 
@@ -815,9 +836,11 @@ class GarminBot:
         args = (context.args or [])
         if not args:
             await update.message.reply_text(
-                "Используй: /feeling [1-5] [заметка]\n"
-                "1 = очень плохо, 2 = плохо, 3 = нормально, 4 = хорошо, 5 = отлично\n"
-                "Пример: /feeling 4 Немного устал после вчерашней тренировки",
+                "💬 Просто скажи мне как самочувствие:\n"
+                "  «чувствую на 4»\n"
+                "  «отлично, полно сил»\n"
+                "  «устал, болят ноги» (я пойму как ниже)\n\n"
+                "Шкала: 1 = очень плохо, 5 = отлично.",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -893,15 +916,18 @@ class GarminBot:
             lines.append("Прошедшие:")
             for r in past[-3:]:
                 dist = f" · {r['distance_km']:.1f} км" if r["distance_km"] else ""
-                actual = f" — {r['actual_time']}" if r.get("actual_time") else " (нет результата — /race result #{} <время>)".format(r["id"])
+                if r.get("actual_time"):
+                    actual = f" — {r['actual_time']}"
+                else:
+                    actual = " (результат не указан — скажи мне словами)"
                 lines.append(f"  ✓ #{r['id']} {r['date']} — {r['name']}{dist}{actual}")
 
         lines.append(
-            "\nДобавить: /race ГГГГ-ММ-ДД Название [дистанция] [время]"
-            "\nили текстом: /race бегу полумарафон в мае, хочу 1:47"
-            "\nРезультат: /race result #ID 49:52 [заметка]"
-            "\nУдалить: /race delete #ID"
-            "\nПриоритет (A-гонка): /race priority #ID  |  снять: /race unpriority #ID"
+            "\n💬 Просто скажи мне что нужно:"
+            "\n  «добавь Московский марафон 27.09, цель 3:30»"
+            "\n  «эта суббота была забег 49:52, сплиты 4:47 / 5:10»"
+            "\n  «пометь марафон как главную гонку»"
+            "\n  «удали забег #3»"
         )
         return "\n".join(lines)
 
@@ -1263,7 +1289,7 @@ class GarminBot:
         awaiting = context.user_data.get("awaiting")
         if awaiting != "food":
             await update.message.reply_text(
-                "Чтобы записать еду, сначала нажми 🍽 Записать еду",
+                "Чтобы записать еду, сначала нажми 🍽 Еда",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -1449,7 +1475,7 @@ class GarminBot:
             await query.edit_message_text(
                 f"✅ Сохранено{date_note}! (#{entry_id})\n"
                 f"{pending['description']}: {pending['calories']:.0f} ккал\n\n"
-                "Для следующего приёма пищи снова нажми 🍽 Записать еду."
+                "Для следующего приёма пищи снова нажми 🍽 Еда."
             )
             context.user_data.pop("awaiting", None)
             context.user_data.pop("food_date", None)
@@ -1498,7 +1524,7 @@ class GarminBot:
         if not entries:
             await update.message.reply_text(
                 f"Сегодня ({today.strftime('%d.%m')}) нет записей о еде.\n"
-                "Нажми 🍽 Записать еду чтобы начать записывать.",
+                "Нажми 🍽 Еда чтобы начать записывать.",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -2298,15 +2324,25 @@ class GarminBot:
             )
             return
 
-        lines = ["🏆 ЛИЧНЫЕ РЕКОРДЫ\n"]
+        import html as _html
+        lines = ["🏆 <b>ЛИЧНЫЕ РЕКОРДЫ</b>", ""]
         for pr in records:
-            hr_str = f"  пульс {pr['avg_hr']}" if pr.get("avg_hr") else ""
-            lines.append(
-                f"  {pr['distance']:>14}: {pr['time']:>8}  ({pr['pace']}/км){hr_str}"
-            )
-            lines.append(f"                  {pr['date']} — {pr['name']}")
+            hr_str = f"  ·  пульс {pr['avg_hr']}" if pr.get("avg_hr") else ""
+            label = _html.escape(str(pr["distance"]))
+            # Показываем фактическую дистанцию в строке заголовка — иначе
+            # «5 км · 22:50 · 4:30» вызывает диссонанс (на самом деле 5.07 км).
+            dist_km = pr.get("dist_km")
+            dist_actual = f" ({dist_km:.2f} км)" if dist_km and abs(dist_km - _label_to_km(label)) > 0.05 else ""
+            time_s = _html.escape(str(pr["time"]))
+            pace = _html.escape(str(pr["pace"]))
+            name = _html.escape(str(pr.get("name") or ""))
+            date_s = _html.escape(str(pr.get("date") or ""))
+            lines.append(f"<b>{label}</b>{dist_actual}  ·  {time_s}  ·  {pace}/км{hr_str}")
+            lines.append(f"  └ {date_s} — {name}")
+            lines.append("")  # отбивка между рекордами
 
-        # Race predictions
+        # Race predictions — таблица с фиксированной шириной → завернём в <pre>
+        # чтобы Telegram отрисовал моноширинно (тогда колонки выровняются).
         fp_file = self._service._workdir_root / str(user_id) / "fitness_profile.json"
         vo2 = None
         if fp_file.exists():
@@ -2320,19 +2356,28 @@ class GarminBot:
             predictions = self._plan_builder.predict_race_times(vo2)
             adjusted = self._plan_builder.predict_race_times(vo2 - 3)
             if predictions:
-                lines.append(f"\n🎯 ПРОГНОЗ ФИНИША (Daniels, Garmin VO2max {vo2}):")
-                lines.append(f"   Garmin завышает на 2-5 пунктов — реалистичнее VO2max {vo2-3}\n")
-                header = f"  {'Дистанция':>14}  {'Теор.':>8}  {'Реалист.':>8}  {'Факт':>8}"
-                lines.append(header)
+                lines.append(
+                    f"🎯 <b>Прогноз финиша</b> (Daniels, VO2max {vo2})"
+                )
+                lines.append(
+                    f"<i>Garmin VO2max часто завышает на 2-5 пунктов — реалистичнее {vo2 - 3}</i>"
+                )
+                lines.append("")
+                table = []
+                table.append(f"{'Дистанция':<10}  {'Теор.':>8}  {'Реал.':>8}  {'Факт':>8}")
+                table.append(f"{'─' * 10}  {'─' * 8}  {'─' * 8}  {'─' * 8}")
                 for dist in predictions:
                     actual = next((pr for pr in records if pr["distance"] == dist), None)
                     fact_str = actual["time"] if actual else "—"
                     adj_str = adjusted.get(dist, "?") if adjusted else "?"
-                    lines.append(
-                        f"  {dist:>14}  {predictions[dist]:>8}  {adj_str:>8}  {fact_str:>8}"
+                    table.append(
+                        f"{dist:<10}  {predictions[dist]:>8}  {adj_str:>8}  {fact_str:>8}"
                     )
+                lines.append("<pre>" + _html.escape("\n".join(table)) + "</pre>")
 
-        await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
+        await update.message.reply_text(
+            "\n".join(lines), reply_markup=MAIN_KEYBOARD, parse_mode="HTML",
+        )
 
     async def handle_weight_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show current weight and prompt for manual entry."""
@@ -2767,7 +2812,7 @@ class GarminBot:
             await update.message.reply_text(text, reply_markup=FOOD_CONFIRM_KB)
             return
 
-        # Edit an existing saved food entry (from 📊 Питание за день management list)
+        # Edit an existing saved food entry (from 📊 Питание management list)
         if awaiting == "food_db_edit" and self._nutrition:
             from datetime import date as _date
 
@@ -2775,7 +2820,7 @@ class GarminBot:
             old_date = context.user_data.pop("food_db_edit_date", None)
             if entry_id is None:
                 await update.message.reply_text(
-                    "Не нашёл, какую запись править. Открой 📊 Питание за день заново.",
+                    "Не нашёл, какую запись править. Открой 📊 Питание заново.",
                     reply_markup=MAIN_KEYBOARD,
                 )
                 return
@@ -2846,7 +2891,7 @@ class GarminBot:
                 f"🔥 {fresh['calories']:.0f} ккал | "
                 f"Б {fresh['protein_g']:.0f}г Ж {fresh['fat_g']:.0f}г "
                 f"У {fresh['carbs_g']:.0f}г\n\n"
-                "Открой 📊 Питание за день, чтобы увидеть обновлённый список.",
+                "Открой 📊 Питание, чтобы увидеть обновлённый список.",
                 reply_markup=MAIN_KEYBOARD,
             )
             return
@@ -2987,7 +3032,7 @@ class GarminBot:
                 return "[ошибка: пустой текст]"
             reason = _classify_bad_memory(text)
             if reason:
-                return f"[отказано: {reason}. Не сохраняй через remember_note, используй структурную команду или confirm_fact.]"
+                return f"[отказано: {reason}. Если это факт за конкретную дату — вызови confirm_fact. Цели — через /goal, кнопки веса/LTHR/часов — структурные.]"
             exp_iso = _parse_expiry(expires_at) if expires_at else None
             new_id = self._storage.add_memory_item(user_id, text, expires_at=exp_iso)
             if new_id is None:
@@ -3020,12 +3065,52 @@ class GarminBot:
             tool_actions.append({"kind": "feeling", "score": score})
             return f"OK: самочувствие за {today.isoformat()} = {score}/5"
 
+        async def _set_training_goal_async(goal_text: str) -> str:
+            goal_text = (goal_text or "").strip()
+            if not goal_text:
+                return "[ошибка: пустой goal_text]"
+            self._storage.save_goal(user_id, goal_text)
+            # Сбросить план на текущую неделю чтобы он пересчитался под новую цель.
+            today_d = datetime.now(self._get_user_tz(user_id)).date()
+            week_start_iso = (today_d - timedelta(days=today_d.weekday())).isoformat()
+            self._storage.clear_plan(user_id, week_start_iso)
+            # Авто-извлечение дат → A-гонки (как делает /goal). Не блокирует —
+            # если парсер цели сломан, цель всё равно сохранена.
+            added_lines: list[str] = []
+            try:
+                added_lines = await self._sync_races_from_goal(user_id, goal_text, today_d)
+            except Exception as exc:
+                logger.warning("set_training_goal: race-extraction failed: %s", exc)
+            tail = ""
+            if added_lines:
+                tail = " A-гонки извлечены: " + "; ".join(added_lines)
+            tool_actions.append({"kind": "goal", "text": goal_text})
+            return f"OK: цель сохранена, план на эту неделю сброшен." + tail
+
+        def _set_training_goal_fn(goal_text: str) -> str:
+            # _ask_with_tools вызывает write-tools синхронно из ThreadPoolExecutor —
+            # asyncio.run() в новой event-loop безопасен (нет конфликта с polling).
+            import asyncio as _aio
+            try:
+                return _aio.run(_set_training_goal_async(goal_text))
+            except RuntimeError:
+                # На случай если уже есть running loop — fallback на синхронную
+                # запись без race-extraction.
+                self._storage.save_goal(user_id, goal_text.strip())
+                today_d = datetime.now(self._get_user_tz(user_id)).date()
+                self._storage.clear_plan(
+                    user_id, (today_d - timedelta(days=today_d.weekday())).isoformat()
+                )
+                tool_actions.append({"kind": "goal", "text": goal_text.strip()})
+                return "OK: цель сохранена (без авто-парсинга гонок)"
+
         write_tools = {
             "confirm_fact": _confirm_fact_fn,
             "remember_note": _remember_note_fn,
             "forget_note": _forget_note_fn,
             "set_race_result": _set_race_result_fn,
             "record_feeling": _record_feeling_fn,
+            "set_training_goal": _set_training_goal_fn,
         }
 
         # Stage 5: считаем факты дня и недели в коде, подаём Claude как готовые блоки
@@ -3114,6 +3199,8 @@ class GarminBot:
                     lines.append(f"🏁 Результат гонки #{a['id']}: {a['time']}")
                 elif k == "feeling":
                     lines.append(f"📝 Самочувствие за сегодня: {a['score']}/5")
+                elif k == "goal":
+                    lines.append(f"🎯 Новая цель сохранена. План на эту неделю пересчитается при следующем «📅 План».")
             if lines:
                 await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
 
