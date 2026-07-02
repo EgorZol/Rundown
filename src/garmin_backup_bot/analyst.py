@@ -966,13 +966,14 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         if upcoming_races:
             from datetime import date as _date
             today_d = _date.fromisoformat(metrics.get("date", _date.today().isoformat()))
-            race_lines = ["ПРЕДСТОЯЩИЕ СТАРТЫ:"]
+            race_lines = ["ПРЕДСТОЯЩИЕ СТАРТЫ (день и счёт уже вычислены — не пересчитывай):"]
             for r in upcoming_races:
-                race_date = _date.fromisoformat(r["date"])
-                days_left = (race_date - today_d).days
                 dist = f" {r['distance_km']:.1f}км" if r.get("distance_km") else ""
                 goal_t = f", цель {r['goal_time']}" if r.get("goal_time") else ""
-                race_lines.append(f"  {r['date']} — {r['name']}{dist}{goal_t} [{days_left} дней]")
+                race_lines.append(
+                    f"  {r['date']} — {r['name']}{dist}{goal_t} "
+                    f"[до старта: {self._race_countdown(r['date'], today_d)}]"
+                )
             parts.append("\n".join(race_lines))
 
         # Race predictions from VO2max
@@ -1460,13 +1461,20 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                 goal_t = f", цель {r['goal_time']}" if r.get("goal_time") else ""
                 star = " ⭐" if r.get("is_priority") else ""
                 if days_left >= 0:
-                    future_lines.append(f"  #{r.get('id','?')} {r['date']} — {r['name']}{dist}{goal_t}{star} (через {days_left} дн.)")
+                    future_lines.append(
+                        f"  #{r.get('id','?')} {r['date']} — {r['name']}{dist}{goal_t}{star} "
+                        f"({self._race_countdown(r['date'], today_d)})"
+                    )
                 else:
                     actual = r.get("actual_time") or "результат не указан"
                     note = f", {r['actual_notes']}" if r.get("actual_notes") else ""
                     past_lines.append(f"  #{r.get('id','?')} {r['date']} — {r['name']}{dist}: факт {actual}{note}")
             if future_lines:
-                extra_context += "\nПРЕДСТОЯЩИЕ СТАРТЫ:\n" + "\n".join(future_lines)
+                extra_context += (
+                    "\nПРЕДСТОЯЩИЕ СТАРТЫ (день и счёт уже вычислены — "
+                    "«завтра/послезавтра» бери из скобок, сам не пересчитывай):\n"
+                    + "\n".join(future_lines)
+                )
             if past_lines:
                 extra_context += "\n\nНЕДАВНО ПРОБЕЖАЛ (структурный источник истины — не переспрашивай результат):\n" + "\n".join(past_lines)
         if current_plan:
@@ -2421,6 +2429,24 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         return block
 
     @staticmethod
+    def _race_countdown(race_date_iso: str, today_d: "datetime.date") -> str:
+        """Готовая фраза «суббота, послезавтра» — LLM не должен считать дни сам (off-by-one)."""
+        from datetime import date as _date
+        race_d = _date.fromisoformat(race_date_iso)
+        days_left = (race_d - today_d).days
+        names = ["понедельник", "вторник", "среда", "четверг", "пятница", "суббота", "воскресенье"]
+        wd = names[race_d.weekday()]
+        if days_left == 0:
+            return f"{wd}, СЕГОДНЯ"
+        if days_left == 1:
+            return f"{wd}, завтра"
+        if days_left == 2:
+            return f"{wd}, послезавтра"
+        if days_left < 14:
+            return f"{wd}, через {days_left} дн."
+        return f"{wd}, через {days_left} дн. (~{days_left // 7} нед.)"
+
+    @staticmethod
     def _calendar_block(anchor_date_str: str = "") -> str:
         """Return today + next 7 days with correct weekday names so Claude never miscalculates."""
         from datetime import date as _date
@@ -2499,16 +2525,13 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         if races:
             from datetime import date as _date
             today_d = _date.fromisoformat(metrics.get("date", _date.today().isoformat()))
-            race_lines = ["ПРЕДСТОЯЩИЕ СТАРТЫ:"]
+            race_lines = ["ПРЕДСТОЯЩИЕ СТАРТЫ (день и счёт уже вычислены — «завтра/послезавтра» бери из скобок, сам не пересчитывай):"]
             for r in races:
-                race_date = _date.fromisoformat(r["date"])
-                days_left = (race_date - today_d).days
                 dist = f" {r['distance_km']:.1f}км" if r.get("distance_km") else ""
                 goal_t = f", цель {r['goal_time']}" if r.get("goal_time") else ""
-                weeks_left = days_left // 7
                 race_lines.append(
                     f"  {r['date']} — {r['name']}{dist}{goal_t} "
-                    f"[{days_left} дней / {weeks_left} недель до старта]"
+                    f"[до старта: {self._race_countdown(r['date'], today_d)}]"
                 )
             parts.append("\n".join(race_lines))
 
