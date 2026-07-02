@@ -350,14 +350,16 @@ class GarminService:
         output_dir.mkdir(parents=True, exist_ok=True)
         self._init_user_dbs(user_id)
         
-        garth = self._garth_login(username, password, output_dir)
+        from garth import SleepData, WeightData, UserProfile, DailyBodyBatteryStress  # type: ignore
+
+        garth_client = self._garth_login(username, password, output_dir)
         start_date, end_date = self._get_sync_range(user_id)
         delta_days = (end_date - start_date).days + 1
-        
+
         # 1. Sync Sleep list in one request
         logger.info("Fetching sleep list for %d days...", delta_days)
         try:
-            sleep_list = garth.SleepData.list(end=end_date, days=delta_days)
+            sleep_list = SleepData.list(end=end_date, days=delta_days, client=garth_client)
         except Exception as exc:
             logger.warning("Failed to fetch sleep list: %s", exc)
             sleep_list = []
@@ -395,7 +397,7 @@ class GarminService:
         # 2. Sync Weight list in one request
         logger.info("Fetching weight list...")
         try:
-            weight_list = garth.WeightData.list(end=end_date, days=delta_days)
+            weight_list = WeightData.list(end=end_date, days=delta_days, client=garth_client)
         except Exception as exc:
             logger.warning("Failed to fetch weight list: %s", exc)
             weight_list = []
@@ -410,7 +412,7 @@ class GarminService:
 
         # 3. Sync Daily Summary & Stress (day-by-day)
         logger.info("Fetching daily summaries day-by-day...")
-        profile = garth.UserProfile.get()
+        profile = UserProfile.get(client=garth_client)
         display_name = profile.display_name
         
         for i in range(delta_days):
@@ -419,7 +421,7 @@ class GarminService:
             
             avg_stress = max_stress = bb_max = bb_min = bb_charged = None
             try:
-                bb = garth.DailyBodyBatteryStress.get(day_iso)
+                bb = DailyBodyBatteryStress.get(day_iso, client=garth_client)
                 if bb:
                     avg_stress = bb.avg_stress_level
                     max_stress = bb.max_stress_level
@@ -436,7 +438,7 @@ class GarminService:
             hydration_goal = hydration_intake = description = None
             
             try:
-                summary = self._connect_api_with_retry(garth, f"/usersummary-service/usersummary/daily/{display_name}", params={"calendarDate": day_iso})
+                summary = self._connect_api_with_retry(garth_client, f"/usersummary-service/usersummary/daily/{display_name}", params={"calendarDate": day_iso})
                 if summary:
                     rhr = summary.get("restingHeartRate")
                     min_hr = summary.get("minHeartRate") or summary.get("minAvgHeartRate")
@@ -512,7 +514,7 @@ class GarminService:
         output_dir.mkdir(parents=True, exist_ok=True)
         self._init_user_dbs(user_id)
         
-        garth = self._garth_login(username, password, output_dir)
+        garth_client = self._garth_login(username, password, output_dir)
         start_date, end_date = self._get_sync_range(user_id)
         
         logger.info("Fetching activities list paging since %s...", start_date)
@@ -521,7 +523,7 @@ class GarminService:
         limit = 50
         while True:
             try:
-                page = garth.connectapi("/activitylist-service/activities/search/activities", params={"start": start, "limit": limit})
+                page = garth_client.connectapi("/activitylist-service/activities/search/activities", params={"start": start, "limit": limit})
             except Exception as exc:
                 logger.warning("Failed to fetch activities page start=%d: %s", start, exc)
                 break
@@ -557,13 +559,13 @@ class GarminService:
                 
                 detail = {}
                 try:
-                    detail = self._connect_api_with_retry(garth, f"/activity-service/activity/{activity_id}")
+                    detail = self._connect_api_with_retry(garth_client,f"/activity-service/activity/{activity_id}")
                 except Exception as exc:
                     logger.warning("Failed to get activity detail for %s: %s", activity_id, exc)
                     
                 zones = []
                 try:
-                    zones = self._connect_api_with_retry(garth, f"/activity-service/activity/{activity_id}/hrTimeInZones")
+                    zones = self._connect_api_with_retry(garth_client,f"/activity-service/activity/{activity_id}/hrTimeInZones")
                 except Exception as exc:
                     logger.debug("Failed to get HR zones for activity %s: %s", activity_id, exc)
                     
@@ -577,14 +579,14 @@ class GarminService:
                         
                 lap_dtos = []
                 try:
-                    laps_resp = self._connect_api_with_retry(garth, f"/activity-service/activity/{activity_id}/laps")
+                    laps_resp = self._connect_api_with_retry(garth_client,f"/activity-service/activity/{activity_id}/laps")
                     lap_dtos = (laps_resp or {}).get("lapDTOs") or []
                 except Exception as exc:
                     logger.debug("Failed to get laps for activity %s: %s", activity_id, exc)
                     
                 # Fetch and save kilometer splits to JSON
                 try:
-                    splits_resp = self._connect_api_with_retry(garth, f"/activity-service/activity/{activity_id}/splits")
+                    splits_resp = self._connect_api_with_retry(garth_client,f"/activity-service/activity/{activity_id}/splits")
                     lap_splits = splits_resp.get("lapDTOs") or []
                     km_splits = []
                     for idx, lap in enumerate(lap_splits):
@@ -1179,14 +1181,19 @@ class GarminService:
         )
 
     def _garth_login(self, username: str, password: str, output_dir: Path):
-        """Login via garth, reusing cached OAuth tokens to avoid SSO rate limits (429)."""
-        import garth  # type: ignore — installed in venv alongside garmindb
+        """Login via garth, reusing cached OAuth tokens to avoid SSO rate limits (429).
+
+        Возвращает изолированный garth.Client (НЕ модульный синглтон): модульные
+        garth.configure/resume/login мутируют глобальную сессию, и параллельные
+        синки разных юзеров затирали бы друг другу авторизацию.
+        """
+        from garth import Client as GarthClient  # type: ignore
         import json as _json
         import time as _time
 
         token_dir = output_dir / ".garth_tokens"
         token_dir.mkdir(parents=True, exist_ok=True)
-        garth.configure(domain="garmin.com")
+        client = GarthClient(domain="garmin.com")
 
         # Check token expiry from file — no network call to avoid triggering 429
         oauth2_file = token_dir / "oauth2_token.json"
@@ -1196,26 +1203,28 @@ class GarminService:
                 expires_at = token_data.get("expires_at", 0)
                 # Keep a 5-minute buffer before expiry
                 if expires_at > _time.time() + 300:
-                    garth.resume(str(token_dir))
+                    client.load(str(token_dir))
                     logger.debug("garth: reused cached session for %s (expires in %.0fs)", _mask_email(username), expires_at - _time.time())
-                    return garth
+                    return client
                 else:
                     logger.info("garth: token expired or expiring soon, re-logging in")
             except Exception as exc:
                 logger.info("garth: could not read cached token (%s), re-logging in", exc)
 
         # Full login and cache the new tokens
-        garth.login(username, password)
-        garth.save(str(token_dir))
+        client.login(username, password)
+        client.dump(str(token_dir))
         logger.info("garth: logged in and saved tokens for %s", _mask_email(username))
-        return garth
+        return client
 
     def _fetch_and_store_hrv(self, username: str, password: str, output_dir: Path) -> None:
         """Login via garth and fetch HRV data for last 7 days, save to JSON files."""
+        from garth import HRVData  # type: ignore
+
         hrv_dir = output_dir / "HRV"
         hrv_dir.mkdir(parents=True, exist_ok=True)
 
-        garth = self._garth_login(username, password, output_dir)
+        garth_client = self._garth_login(username, password, output_dir)
 
         today = date.today()
         for delta in range(7):
@@ -1225,7 +1234,7 @@ class GarminService:
             if delta > 0 and out.exists():
                 continue
             try:
-                hrv = garth.HRVData.get(day)
+                hrv = HRVData.get(day, client=garth_client)
                 if hrv is None:
                     continue
                 s = hrv.hrv_summary
@@ -1247,7 +1256,7 @@ class GarminService:
 
         # Fetch VO2max, LTHR, age and weight from biometric profile (same garth session)
         try:
-            info = garth.connectapi("/userprofile-service/userprofile/personal-information")
+            info = garth_client.connectapi("/userprofile-service/userprofile/personal-information")
             bio = (info or {}).get("biometricProfile") or {}
             user_info = (info or {}).get("userInfo") or {}
             weight_g = bio.get("weight")
@@ -1284,7 +1293,7 @@ class GarminService:
 
     def _fetch_activity_laps(self, username: str, password: str, output_dir: Path, user_id: int) -> None:
         """Fetch lap data from Garmin Connect API for recent activities and save as JSON."""
-        garth = self._garth_login(username, password, output_dir)
+        garth_client = self._garth_login(username, password, output_dir)
 
         laps_dir = output_dir / "laps"
         laps_dir.mkdir(parents=True, exist_ok=True)
@@ -1310,7 +1319,7 @@ class GarminService:
             # Fetch laps if not cached
             if not lap_file.exists():
                 try:
-                    data = garth.connectapi(f"/activity-service/activity/{activity_id}/laps")
+                    data = garth_client.connectapi(f"/activity-service/activity/{activity_id}/laps")
                     lap_dtos = (data or {}).get("lapDTOs") or []
                     laps = []
                     for i, lap in enumerate(lap_dtos):
@@ -1339,7 +1348,7 @@ class GarminService:
             # Fetch weather if not cached
             if not weather_file.exists():
                 try:
-                    detail = garth.connectapi(f"/activity-service/activity/{activity_id}")
+                    detail = garth_client.connectapi(f"/activity-service/activity/{activity_id}")
                     weather = {}
                     for key in ("weatherStartCondition", "weatherEndCondition"):
                         cond = (detail or {}).get(key) or {}
