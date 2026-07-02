@@ -406,7 +406,7 @@ class GarminBot:
         rest_keywords = ["отдых", "Отдых", "растяжк", "выходной"]
         if any(kw in today_line for kw in rest_keywords):
             return
-        activities = self._service.collect_recent_activities(user_id, days=1)
+        activities = await asyncio.to_thread(self._service.collect_recent_activities, user_id, days=1)
         today_acts = [
             a for a in activities
             if a.get("start_time", "")[:10] == today.isoformat()
@@ -1144,7 +1144,7 @@ class GarminBot:
         try:
             today = datetime.now(self._get_user_tz(user_id)).date()
             yesterday = today - timedelta(days=1)
-            metrics = self._get_metrics(user_id, today)
+            metrics = await asyncio.to_thread(self._get_metrics, user_id, today)
             training_goal = self._storage.get_goal(user_id)
             upcoming_races = self._storage.get_races(user_id, from_date=today.isoformat())
             # Dynamic weekly km target based on race schedule
@@ -1197,7 +1197,7 @@ class GarminBot:
         try:
             today = datetime.now(self._get_user_tz(user_id)).date()
             yesterday = today - timedelta(days=1)
-            metrics = self._get_metrics(user_id, today)
+            metrics = await asyncio.to_thread(self._get_metrics, user_id, today)
             report = await self._analyst.analyze_calories(
                 metrics or {"date": today.isoformat()},
                 today=today,
@@ -1529,8 +1529,8 @@ class GarminBot:
             )
             return
 
-        garmin_daily = self._get_garmin_daily_calories(user_id, today)
-        weight_kg = self._get_user_weight(user_id)
+        garmin_daily = await asyncio.to_thread(self._get_garmin_daily_calories, user_id, today)
+        weight_kg = await asyncio.to_thread(self._get_user_weight, user_id)
         plan_line = self._get_plan_line(user_id, today)
         report = NutritionAnalyzer.format_daily_report(
             entries, garmin_daily, weight_kg, today, plan_line=plan_line,
@@ -1761,7 +1761,7 @@ class GarminBot:
 
                 today = datetime.now(self._get_user_tz(user_id)).date()
                 yesterday = today - timedelta(days=1)
-                metrics = self._get_metrics(user_id, today)
+                metrics = await asyncio.to_thread(self._get_metrics, user_id, today)
 
             if not metrics:
                 stop.set()
@@ -1847,7 +1847,7 @@ class GarminBot:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
         # Yesterday's nutrition summary (sent after the main brief, uses freshly-synced Garmin data)
-        nutrition_report = self._build_yesterday_nutrition_report(user_id, yesterday)
+        nutrition_report = await asyncio.to_thread(self._build_yesterday_nutrition_report, user_id, yesterday)
         if nutrition_report:
             for chunk in self._split(nutrition_report):
                 await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
@@ -1904,12 +1904,12 @@ class GarminBot:
                     sync_exc = exc
                     logger.warning("Activity sync error (will use cached data): %s", exc)
 
-                activities = self._service.collect_recent_activities(user_id, days=14)
+                activities = await asyncio.to_thread(self._service.collect_recent_activities, user_id, days=14)
                 # Health state for workout context: same date logic as morning report.
                 # daily_summary from yesterday (complete day), sleep from today (wake date = today = last night).
                 today = datetime.now(self._get_user_tz(user_id)).date()
                 yesterday = today - timedelta(days=1)
-                daily_metrics = self._get_metrics(user_id, today, yesterday)
+                daily_metrics = await asyncio.to_thread(self._get_metrics, user_id, today, yesterday)
                 if daily_metrics:
                     sleep_today = self._service.collect_sleep_for_date(user_id, today)
                     if sleep_today:
@@ -2058,7 +2058,7 @@ class GarminBot:
                 except Exception as exc:
                     logger.warning("Activity sync before plan failed (using cached data): %s", exc)
                 yesterday = today - timedelta(days=1)
-                metrics = self._get_metrics(user_id, today)
+                metrics = await asyncio.to_thread(self._get_metrics, user_id, today)
 
                 history = self._storage.get_history(user_id, limit=10)
                 user_memory = self._storage.get_user_memory(user_id)
@@ -2126,7 +2126,7 @@ class GarminBot:
         try:
             today = datetime.now(self._get_user_tz(user_id)).date()
             yesterday = today - timedelta(days=1)
-            metrics = self._get_metrics(user_id, today)
+            metrics = await asyncio.to_thread(self._get_metrics, user_id, today)
             if not metrics:
                 metrics = {"date": today.isoformat()}
 
@@ -2193,7 +2193,7 @@ class GarminBot:
 
         try:
             today = datetime.now(self._get_user_tz(user_id)).date()
-            metrics = self._get_metrics(user_id, today)
+            metrics = await asyncio.to_thread(self._get_metrics, user_id, today)
             if not metrics:
                 metrics = {"date": today.isoformat()}
 
@@ -2253,20 +2253,20 @@ class GarminBot:
                 day = week_start_date + timedelta(days=i)
                 if day > week_end_date:
                     break
-                dc = self._get_garmin_daily_calories(user_id, day)
+                dc = await asyncio.to_thread(self._get_garmin_daily_calories, user_id, day)
                 if dc:
                     garmin_week_cal[day.isoformat()] = dc
 
             # Активности окна (с понедельника недели). collect_recent_activities
             # тянет от date.today()−days, поэтому глубину берём с запасом.
             days_back = (today - week_start_date).days + 2
-            all_recent = self._service.collect_recent_activities(user_id, days=days_back)
+            all_recent = await asyncio.to_thread(self._service.collect_recent_activities, user_id, days=days_back)
             week_activities = [
                 a for a in all_recent
                 if week_start <= (a.get("start_time") or "")[:10] <= week_end_iso
             ]
 
-            weight_kg = self._get_user_weight(user_id)
+            weight_kg = await asyncio.to_thread(self._get_user_weight, user_id)
 
             verified_facts = self._storage.list_verified_facts(
                 user_id, since_date=week_start,
@@ -2967,7 +2967,7 @@ class GarminBot:
         today = datetime.now(self._get_user_tz(user_id)).date()
         yesterday = today - timedelta(days=1)
         # Try today first, then yesterday — user may ask about today's workout
-        metrics = self._get_metrics(user_id, today)
+        metrics = await asyncio.to_thread(self._get_metrics, user_id, today)
         today_sleep = self._service.collect_sleep_for_date(user_id, today)
         if today_sleep and metrics:
             metrics["sleep_last_night"] = today_sleep
@@ -2975,7 +2975,7 @@ class GarminBot:
         # Always fetch recent activities with km_splits for Q&A context
         # (activities_28d from collect_daily_metrics has no km_splits)
         if metrics:
-            qa_activities = self._service.collect_recent_activities(user_id, days=14)
+            qa_activities = await asyncio.to_thread(self._service.collect_recent_activities, user_id, days=14)
             if qa_activities:
                 metrics["recent_activities_for_qa"] = qa_activities[:5]
 
@@ -3117,7 +3117,7 @@ class GarminBot:
         from . import coach as _coach
         qa_profile = self._storage.get_profile_override(user_id)
         # активности за 8 дней (хватает на текущую неделю + вчерашний день)
-        qa_week_acts = self._service.collect_recent_activities(user_id, days=8)
+        qa_week_acts = await asyncio.to_thread(self._service.collect_recent_activities, user_id, days=8)
         qa_week_start = today - timedelta(days=today.weekday())
         qa_week_facts = _coach.compute_week_facts(
             activities=qa_week_acts,
@@ -3336,7 +3336,7 @@ class GarminBot:
         week_start = (today - timedelta(days=today.weekday())).isoformat()
 
         try:
-            metrics = self._get_metrics(user_id, today) or {"date": today.isoformat()}
+            metrics = await asyncio.to_thread(self._get_metrics, user_id, today) or {"date": today.isoformat()}
             history = self._storage.get_history(user_id, limit=10)
             user_memory = self._storage.get_user_memory(user_id)
             training_goal = self._storage.get_goal(user_id)

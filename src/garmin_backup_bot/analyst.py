@@ -2153,7 +2153,9 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                                     "query_app_db": "app",
                                 }.get(block.name, "")
                                 sql_q = (block.input or {}).get("sql", "")
-                                result = _run_sql(db_key, sql_q)
+                                # SQLite (включая пересборку in-memory app-view) — в поток,
+                                # чтобы не блокировать event loop на каждый tool-раунд
+                                result = await asyncio.to_thread(_run_sql, db_key, sql_q)
                                 logger.info("Tool %s sql=%r result_len=%d preview=%r",
                                             block.name, sql_q, len(result), result[:200])
                                 MAX_TOOL_RESULT = 24000
