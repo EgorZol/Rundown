@@ -90,10 +90,13 @@ class NutritionAnalyzer:
         api_key: str,
         model: str,
         fallback_models: list[str] | None = None,
+        usage_sink=None,
     ) -> None:
         self._client = Anthropic(api_key=api_key)
         candidates = [model, *(fallback_models or [])]
         self._models = list(dict.fromkeys(m for m in candidates if m))
+        # Куда писать расход токенов (storage.log_token_usage); None = только лог
+        self._usage_sink = usage_sink
 
     async def _call_api(
         self,
@@ -129,6 +132,16 @@ class NutritionAnalyzer:
                 u = response.usage
                 cache_read = getattr(u, "cache_read_input_tokens", 0) or 0
                 cache_write = getattr(u, "cache_creation_input_tokens", 0) or 0
+                if self._usage_sink is not None:
+                    try:
+                        from .analyst import CURRENT_USER_ID
+                        self._usage_sink(
+                            CURRENT_USER_ID.get(), "nutrition", model,
+                            u.input_tokens or 0, u.output_tokens or 0,
+                            cache_read, cache_write,
+                        )
+                    except Exception as exc:
+                        logger.debug("usage sink failed: %s", exc)
                 logger.info(
                     "Nutrition API OK: stop=%s in=%d out=%d cache_read=%d cache_write=%d",
                     response.stop_reason, u.input_tokens, u.output_tokens,

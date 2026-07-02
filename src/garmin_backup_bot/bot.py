@@ -18,7 +18,7 @@ from telegram import (
     ReplyKeyboardRemove,
     Update,
 )
-from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, filters
+from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
 
 from .analyst import HealthAnalyst
 from .crypto import SecretBox
@@ -491,7 +491,19 @@ class GarminBot:
                 return stripped
         return None
 
+    async def _set_user_context(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """group=-1: выставляет CURRENT_USER_ID для атрибуции расхода токенов.
+
+        concurrent_updates(True) обрабатывает каждый update в своей asyncio-задаче,
+        contextvar изолирован между юзерами и протекает в to_thread-вызовы Claude.
+        """
+        user = getattr(update, "effective_user", None)
+        if user is not None:
+            from .analyst import CURRENT_USER_ID
+            CURRENT_USER_ID.set(user.id)
+
     def _register_handlers(self) -> None:
+        self._app.add_handler(TypeHandler(Update, self._set_user_context), group=-1)
         self._app.add_handler(CommandHandler("start", self.start))
         self._app.add_handler(CommandHandler("link_garmin", self.link_garmin))
         self._app.add_handler(CommandHandler("status", self.status))
@@ -3237,6 +3249,18 @@ class GarminBot:
             f"Retention D7: {self._fmt_retention(stats.retention_d7, stats.cohort_d7_size)}\n"
             f"Retention D30: {self._fmt_retention(stats.retention_d30, stats.cohort_d30_size)}"
         )
+        token_rows = await asyncio.to_thread(self._storage.get_token_usage_stats, 30)
+        if token_rows:
+            lines = ["", "Токены за 30 дней (in/out/cache_read):"]
+            for r in token_rows:
+                uid = r["user_id"] if r["user_id"] is not None else "—"
+                lines.append(
+                    f"  {uid}: {r['calls']} вызовов, "
+                    f"{(r['input_tokens'] or 0) / 1000:.0f}k / "
+                    f"{(r['output_tokens'] or 0) / 1000:.0f}k / "
+                    f"{(r['cache_read_tokens'] or 0) / 1000:.0f}k"
+                )
+            text += "\n".join(lines)
         await update.effective_message.reply_text(text)
 
     async def handle_webapp_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

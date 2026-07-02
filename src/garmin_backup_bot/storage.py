@@ -296,6 +296,62 @@ class Storage:
                 "CREATE INDEX IF NOT EXISTS idx_food_user_date "
                 "ON food_entries(user_id, entry_date)"
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS token_usage (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER,
+                    method TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    input_tokens INTEGER NOT NULL DEFAULT 0,
+                    output_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                    cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_token_usage_user_at "
+                "ON token_usage(user_id, created_at)"
+            )
+
+    def log_token_usage(
+        self, user_id: int | None, method: str, model: str,
+        input_tokens: int, output_tokens: int,
+        cache_read_tokens: int = 0, cache_write_tokens: int = 0,
+    ) -> None:
+        """Записать расход токенов одного вызова Claude (атрибуция стоимости по юзерам)."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO token_usage (user_id, method, model, input_tokens, output_tokens, "
+                "cache_read_tokens, cache_write_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, method, model, input_tokens, output_tokens,
+                 cache_read_tokens, cache_write_tokens, now_iso),
+            )
+
+    def get_token_usage_stats(self, days: int = 30) -> list[dict]:
+        """Суммарный расход токенов по юзерам за N дней (для /admin_stats)."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT user_id, COUNT(*) AS calls,
+                       SUM(input_tokens) AS input_tokens,
+                       SUM(output_tokens) AS output_tokens,
+                       SUM(cache_read_tokens) AS cache_read_tokens,
+                       SUM(cache_write_tokens) AS cache_write_tokens
+                FROM token_usage
+                WHERE created_at >= ?
+                GROUP BY user_id
+                ORDER BY SUM(input_tokens) + SUM(output_tokens) DESC
+                """,
+                (since,),
+            ).fetchall()
+        cols = ("user_id", "calls", "input_tokens", "output_tokens",
+                "cache_read_tokens", "cache_write_tokens")
+        return [dict(zip(cols, r)) for r in rows]
 
     def save_profile_override(
         self, user_id: int, lthr: float | None = None, weight_kg: float | None = None,

@@ -40,12 +40,14 @@ def main() -> None:
         fallback_models=settings.anthropic_model_fallbacks,
         user_age=settings.user_age,
         weekly_km_target=settings.weekly_km_target,
+        usage_sink=storage.log_token_usage,
     )
     plan_builder = WeeklyPlanBuilder(analyst=analyst, service=service)
     nutrition = NutritionAnalyzer(
         api_key=settings.anthropic_api_key,
         model=settings.anthropic_model,
         fallback_models=settings.anthropic_model_fallbacks,
+        usage_sink=storage.log_token_usage,
     )
     transcriber = Transcriber(api_key=settings.openai_api_key) if settings.openai_api_key else None
 

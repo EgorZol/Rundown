@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import datetime
 import logging
 from typing import Any, Callable
 
 from anthropic import Anthropic
+
+# Текущий Telegram user_id для атрибуции расхода токенов. Выставляется в bot.py
+# на каждый update (TypeHandler, group=-1); contextvars протекают через await
+# и asyncio.to_thread, так что все Claude-вызовы внутри хендлера видят юзера.
+CURRENT_USER_ID: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "garmin_bot_current_user_id", default=None
+)
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +91,15 @@ class HealthAnalyst:
         fallback_models: list[str] | None = None,
         user_age: int = 35,
         weekly_km_target: float = 0.0,
+        usage_sink: "Callable[..., None] | None" = None,
     ) -> None:
         self._client = Anthropic(api_key=api_key)
         candidates = [model, *(fallback_models or [])]
         self._models = list(dict.fromkeys(m for m in candidates if m))
         self._user_age = user_age
         self._weekly_km_target = weekly_km_target
+        # Куда писать расход токенов (storage.log_token_usage); None = только лог
+        self._usage_sink = usage_sink
         # Tanaka formula: more accurate for middle-aged than 220-age
         self._hr_max = round(208 - 0.7 * user_age)
         self._hr_zones = {
@@ -118,6 +129,24 @@ class HealthAnalyst:
             lines.append(f"  #{f['id']} {f['fact_date']}: {f['fact_text']}")
         return "\n".join(lines) + "\n"
 
+    def _report_usage(self, method: str, model: str, response: Any) -> None:
+        """Записать usage одного API-вызова в sink (token_usage). Никогда не роняет анализ."""
+        if self._usage_sink is None:
+            return
+        try:
+            u = response.usage
+            self._usage_sink(
+                CURRENT_USER_ID.get(),
+                method,
+                model,
+                u.input_tokens or 0,
+                u.output_tokens or 0,
+                getattr(u, "cache_read_input_tokens", 0) or 0,
+                getattr(u, "cache_creation_input_tokens", 0) or 0,
+            )
+        except Exception as exc:
+            logger.debug("usage sink failed: %s", exc)
+
     async def _generate_text(
         self,
         system_prompt: str | list[dict],
@@ -125,6 +154,7 @@ class HealthAnalyst:
         max_tokens: int,
         history: list[dict] | None = None,
         user_memory: str = "",
+        method: str = "generate",
     ) -> str:
         # Build messages: history (prior turns) + current user message
         messages: list[dict] = list(history or [])
@@ -158,6 +188,7 @@ class HealthAnalyst:
                 if idx > 0:
                     logger.warning("Anthropic fallback model used: %s", model)
                 result = "\n".join(part for part in text_parts if part).strip()
+                self._report_usage(method, model, response)
                 u = response.usage
                 cache_read = getattr(u, "cache_read_input_tokens", 0) or 0
                 cache_write = getattr(u, "cache_creation_input_tokens", 0) or 0
@@ -534,6 +565,7 @@ class HealthAnalyst:
             coach_block += "\n\n📐 WEEK FACTS:\n" + week_facts.to_prompt_block()
         try:
             return await self._generate_text(
+                method="analyze_workout",
                 system_prompt=(
                     workout_system
                     + coach_block
@@ -618,6 +650,7 @@ class HealthAnalyst:
 """
         try:
             return await self._generate_text(
+                method="analyze_plan",
                 system_prompt=plan_system + self._user_context_block(fitness_profile, garmin_zone_boundaries=garmin_zones),
                 user_prompt=context_text,
                 max_tokens=3000,
@@ -645,6 +678,7 @@ class HealthAnalyst:
         )
         try:
             raw = await self._generate_text(
+                method="parse_races",
                 system_prompt=system,
                 user_prompt=text,
                 max_tokens=800,
@@ -937,6 +971,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         fitness_profile = metrics.get("fitness_profile")
         try:
             return await self._generate_text(
+                method="sport_status",
                 system_prompt=sport_system + self._user_context_block(fitness_profile, garmin_zone_boundaries=metrics.get("garmin_zones")),
                 user_prompt=sport_prompt,
                 max_tokens=1800,
@@ -1132,6 +1167,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         fp = metrics.get("fitness_profile")
         try:
             return await self._generate_text(
+                method="progress",
                 system_prompt=progress_system + self._user_context_block(fp, garmin_zone_boundaries=metrics.get("garmin_zones")),
                 user_prompt=context,
                 max_tokens=2000,
@@ -1382,6 +1418,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         )
         try:
             return await self._generate_text(
+                method="weekly_summary",
                 system_prompt=(
                     weekly_system
                     + coach_block
@@ -1721,6 +1758,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                     write_tools=write_tools,
                 )
             return await self._generate_text(
+                method="ask",
                 system_prompt=system,
                 user_prompt=question,
                 max_tokens=2000,
@@ -2083,6 +2121,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
                         tools=tools,
                         messages=messages,
                     )
+                    self._report_usage("ask_tools", model, response)
                     if response.stop_reason == "tool_use":
                         tool_call_count += 1
                         if tool_call_count > 8:
@@ -2219,6 +2258,7 @@ Z1-Z3 — лёгкая аэробная работа (цель ≥80% сесси
         )
         try:
             return await self._generate_text(
+                method="morning",
                 system_prompt=system,
                 user_prompt=user_prompt,
                 max_tokens=2000,
