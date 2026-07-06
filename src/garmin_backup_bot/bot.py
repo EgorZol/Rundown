@@ -2112,6 +2112,11 @@ class GarminBot:
                     previous_plan=prev_plan,
                     past_races=past_races,
                 )
+                # Неделя известна коду заранее — даты в тексте просто переписываем
+                from . import coach as _coach
+                plan_text, n_fixes = _coach.fix_plan_dates(plan_text, date.fromisoformat(week_start))
+                if n_fixes:
+                    logger.warning("handle_plan: исправлено %d дат в сгенерированном плане", n_fixes)
                 self._storage.save_plan(user_id, week_start, plan_text, week_type)
         except Exception as exc:
             logger.exception("Error generating plan")
@@ -2256,6 +2261,10 @@ class GarminBot:
                         upcoming_races=upcoming_races,
                         feelings=recent_feelings,
                     )
+                    from . import coach as _coach
+                    plan_text, n_fixes = _coach.fix_plan_dates(plan_text, date.fromisoformat(week_start))
+                    if n_fixes:
+                        logger.warning("weekly_summary: исправлено %d дат в сгенерированном плане", n_fixes)
                     self._storage.save_plan(user_id, week_start, plan_text, week_type)
                 except Exception as exc:
                     logger.warning("Could not auto-generate plan for weekly summary: %s", exc)
@@ -3034,8 +3043,22 @@ class GarminBot:
             wt = week_type if week_type in valid_types else "build"
             if not plan_text or len(plan_text.strip()) < 30:
                 return "[ошибка: plan_text слишком короткий — нужен полный текст плана]"
-            self._storage.save_plan(user_id, week_start, plan_text, wt)
-            return f"OK: план сохранён (week_start={week_start}, week_type={wt}, длина={len(plan_text)} симв.)"
+            # Инцидент 05.07.2026: Claude сдвинул все даты на +1 день, а план
+            # ушёл под week_start текущей недели, затерев действующий план.
+            # Даты валидируются кодом; week_start выводится из самих дат —
+            # так план можно сохранить и на следующую неделю.
+            from . import coach as _coach
+            check = _coach.check_plan_dates(plan_text, today)
+            if not check.ok:
+                return (
+                    "[ошибка: даты в плане не совпадают с днями недели: "
+                    + "; ".join(check.errors[:7])
+                    + f". Правильный календарь недели плана: {check.hint}. "
+                    "Исправь даты в plan_text и вызови save_weekly_plan повторно.]"
+                )
+            ws = check.week_start.isoformat() if check.week_start else week_start
+            self._storage.save_plan(user_id, ws, plan_text, wt)
+            return f"OK: план сохранён (week_start={ws}, week_type={wt}, длина={len(plan_text)} симв.)"
 
         # Список действий бота для UI-подтверждения после Claude-ответа.
         # Каждый элемент: dict с полями для шаблонной фразы юзеру.
@@ -3399,6 +3422,10 @@ class GarminBot:
                 feelings=recent_feelings,
                 previous_plan=prev_plan,
             )
+            from . import coach as _coach
+            plan_text, n_fixes = _coach.fix_plan_dates(plan_text, date.fromisoformat(week_start))
+            if n_fixes:
+                logger.warning("plan_tweak: исправлено %d дат в сгенерированном плане", n_fixes)
             self._storage.save_plan(user_id, week_start, plan_text, week_type)
         except Exception as exc:
             logger.exception("Error regenerating plan with tweak")

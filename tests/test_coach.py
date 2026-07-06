@@ -355,5 +355,64 @@ class TestMorningFacts(unittest.TestCase):
         self.assertIsNone(mf.sleep_total_h)
 
 
+class TestPlanDates(unittest.TestCase):
+    """Регресс инцидента 05-06.07.2026: сдвиг дат плана на +1 день."""
+
+    TODAY = date(2026, 7, 5)  # воскресенье, Алина сохраняет план на следующую неделю
+
+    def test_correct_plan_passes(self):
+        plan = "Пн 06.07 — бег 7 км\nВт 07.07 — отдых\nВс 12.07 — лонг 21 км"
+        c = coach.check_plan_dates(plan, self.TODAY)
+        self.assertTrue(c.ok)
+        self.assertEqual(c.week_start, date(2026, 7, 6))
+        self.assertEqual(c.pairs_found, 3)
+
+    def test_alina_shift_detected(self):
+        # реальный баг: все даты +1 (Пн 07.07 вместо Пн 06.07)
+        plan = "Пн 07.07 — бег\nВт 08.07 — бег\nВс 13.07 — лонг"
+        c = coach.check_plan_dates(plan, self.TODAY)
+        self.assertFalse(c.ok)
+        self.assertEqual(len(c.errors), 3)
+        self.assertIn("07.07 это Вт", c.errors[0])
+        # hint предлагает правильный маппинг недели, куда попадает большинство дат
+        self.assertIn("Пн 06.07", c.hint)
+        self.assertIn("Вс 12.07", c.hint)
+
+    def test_no_dates_ok_without_week(self):
+        c = coach.check_plan_dates("Пн — бег, Вт — отдых", self.TODAY)
+        self.assertTrue(c.ok)
+        self.assertIsNone(c.week_start)
+        self.assertEqual(c.pairs_found, 0)
+
+    def test_mixed_weeks_rejected(self):
+        plan = "Пн 06.07 — бег\nВт 14.07 — бег"
+        c = coach.check_plan_dates(plan, self.TODAY)
+        self.assertFalse(c.ok)
+
+    def test_year_inference_across_new_year(self):
+        c = coach.check_plan_dates("Пн 28.12 — бег\nВс 03.01 — лонг", date(2026, 12, 27))
+        self.assertTrue(c.ok)
+        self.assertEqual(c.week_start, date(2026, 12, 28))
+
+    def test_fraction_not_parsed_as_date(self):
+        # «5.6 ккал» / «Пт 5/6 порции» не должны ловиться как даты
+        c = coach.check_plan_dates("Пн 06.07 — гель 5.6 ккал", self.TODAY)
+        self.assertTrue(c.ok)
+        self.assertEqual(c.pairs_found, 1)
+
+    def test_fix_plan_dates_rewrites(self):
+        plan = "Пн 07.07 — бег\nВт 08.07 — отдых\nВс 13.07 — лонг"
+        fixed, n = coach.fix_plan_dates(plan, date(2026, 7, 6))
+        self.assertEqual(n, 3)
+        self.assertIn("Пн 06.07", fixed)
+        self.assertIn("Вс 12.07", fixed)
+
+    def test_fix_plan_dates_noop_when_correct(self):
+        plan = "Пн 06.07 — бег\nВс 12.07 — лонг"
+        fixed, n = coach.fix_plan_dates(plan, date(2026, 7, 6))
+        self.assertEqual(n, 0)
+        self.assertEqual(fixed, plan)
+
+
 if __name__ == "__main__":
     unittest.main()

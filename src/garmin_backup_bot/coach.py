@@ -794,3 +794,114 @@ def compute_morning_facts(metrics: dict, today: date | None = None) -> MorningFa
         recovery=recovery,
         yesterday_brief=y_str,
     )
+
+
+# ============================================================================
+# ДАТЫ ПЛАНА НЕДЕЛИ — валидация и авто-коррекция пар «Пн DD.MM».
+# Инцидент 05-06.07.2026: Claude сдвинул все даты плана на +1 день
+# (Пн 07.07 вместо Пн 06.07) и план сохранился не в ту неделю.
+# ============================================================================
+
+import re as _re
+
+WEEKDAY_ABBRS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+_WEEKDAY_IDX = {abbr: i for i, abbr in enumerate(WEEKDAY_ABBRS)}
+_PLAN_DAY_RE = _re.compile(
+    r"\b(Пн|Вт|Ср|Чт|Пт|Сб|Вс)\.?\s+(\d{1,2})\.(\d{1,2})(?!\.\d)"
+)
+
+
+@dataclass
+class PlanDatesCheck:
+    """Результат проверки пар «день недели + дата» в тексте плана."""
+    ok: bool
+    week_start: date | None          # понедельник недели плана (если ok и даты есть)
+    errors: list[str] = field(default_factory=list)
+    hint: str = ""                   # правильный маппинг Пн..Вс для недели плана
+    pairs_found: int = 0
+
+
+def _infer_year(day: int, month: int, today: date) -> date | None:
+    """DD.MM → date, год подбирается ближайший к today (окно ±200 дней)."""
+    best = None
+    for year in (today.year - 1, today.year, today.year + 1):
+        try:
+            d = date(year, month, day)
+        except ValueError:
+            continue
+        if best is None or abs((d - today).days) < abs((best - today).days):
+            best = d
+    if best is not None and abs((best - today).days) > 200:
+        return None
+    return best
+
+
+def check_plan_dates(plan_text: str, today: date) -> PlanDatesCheck:
+    """Проверяет, что каждая дата в плане приходится на названный день недели.
+
+    Если всё сходится — возвращает week_start (понедельник недели плана;
+    можно сохранять план и на СЛЕДУЮЩУЮ неделю). Если нет — список ошибок
+    и hint с правильным маппингом, который скармливается Claude как tool-error.
+    План без дат — ok, week_start=None (вызывающий подставит текущую неделю).
+    """
+    pairs: list[tuple[str, date]] = []
+    errors: list[str] = []
+    for m in _PLAN_DAY_RE.finditer(plan_text):
+        abbr, dd, mm = m.group(1), int(m.group(2)), int(m.group(3))
+        d = _infer_year(dd, mm, today)
+        if d is None:
+            errors.append(f"«{abbr} {dd:02d}.{mm:02d}» — дата вне разумного окна от сегодня")
+            continue
+        pairs.append((abbr, d))
+        if d.weekday() != _WEEKDAY_IDX[abbr]:
+            real = WEEKDAY_ABBRS[d.weekday()]
+            errors.append(f"«{abbr} {d.strftime('%d.%m')}» — но {d.strftime('%d.%m')} это {real}")
+
+    if not pairs:
+        return PlanDatesCheck(ok=not errors, week_start=None, errors=errors)
+
+    # Неделя-подсказка: по большинству реальных дат (какой неделе они принадлежат)
+    week_counts: dict[date, int] = {}
+    for _, d in pairs:
+        ws = d - timedelta(days=d.weekday())
+        week_counts[ws] = week_counts.get(ws, 0) + 1
+    ws_hint = max(week_counts, key=lambda k: week_counts[k])
+    hint = ", ".join(
+        f"{WEEKDAY_ABBRS[i]} {(ws_hint + timedelta(days=i)).strftime('%d.%m')}"
+        for i in range(7)
+    )
+
+    if errors:
+        return PlanDatesCheck(ok=False, week_start=None, errors=errors,
+                              hint=hint, pairs_found=len(pairs))
+
+    week_starts = {d - timedelta(days=d.weekday()) for _, d in pairs}
+    if len(week_starts) > 1:
+        return PlanDatesCheck(
+            ok=False, week_start=None,
+            errors=[f"даты плана попадают в разные недели: {sorted(week_starts)}"],
+            hint=hint, pairs_found=len(pairs),
+        )
+    return PlanDatesCheck(ok=True, week_start=ws_hint, hint=hint, pairs_found=len(pairs))
+
+
+def fix_plan_dates(plan_text: str, week_start: date) -> tuple[str, int]:
+    """Детерминированно переписывает даты в парах «Пн DD.MM» под известный week_start.
+
+    Для планов, которые генерирует сам бот (кнопка «📅 План»), неделя известна
+    заранее — дате в тексте доверять не нужно, её можно просто вычислить.
+    Возвращает (исправленный_текст, число_замен).
+    """
+    fixes = 0
+
+    def _sub(m: "_re.Match[str]") -> str:
+        nonlocal fixes
+        abbr = m.group(1)
+        correct = week_start + timedelta(days=_WEEKDAY_IDX[abbr])
+        current = f"{int(m.group(2)):02d}.{int(m.group(3)):02d}"
+        want = correct.strftime("%d.%m")
+        if current != want:
+            fixes += 1
+        return f"{abbr} {want}"
+
+    return _PLAN_DAY_RE.sub(_sub, plan_text), fixes

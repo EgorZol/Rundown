@@ -811,11 +811,22 @@ class Storage:
     # ---------- verified facts (источник истины от атлета) ----------
 
     def add_verified_fact(self, user_id: int, fact_date: str, fact_text: str) -> int:
-        """Сохраняет утверждённый юзером факт за дату. Возвращает id."""
+        """Сохраняет утверждённый юзером факт за дату. Возвращает id.
+
+        Идентичный активный факт за ту же дату не дублируется (Claude иногда
+        вызывает confirm_fact дважды за один ответ) — возвращается существующий id.
+        """
         fact_text = (fact_text or "").strip()
         if not fact_text:
             return 0
         with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM verified_facts "
+                "WHERE user_id = ? AND fact_date = ? AND fact_text = ? AND is_active = 1",
+                (user_id, fact_date, fact_text),
+            ).fetchone()
+            if row:
+                return int(row[0])
             cur = conn.execute(
                 "INSERT INTO verified_facts (user_id, fact_date, fact_text) VALUES (?, ?, ?)",
                 (user_id, fact_date, fact_text),
