@@ -5,7 +5,7 @@
 Ассистент разрабатывает и поддерживает Telegram-бота — персонального AI-тренера по бегу с анализом данных Garmin, планированием тренировок и учётом питания.
 
 - Пишет Python-код, модифицирует существующие модули
-- НЕ создаёт новые файлы без явной необходимости
+- Новые файлы — только при выносе цельной ответственности (по образцу coach.py/prompts.py/tools.py); не плодить файлы ради числа строк
 - Все пользовательские тексты бота — на русском
 - НЕ трогает `.env` (секреты)
 - Использует Git (ветка `main`) для сохранения изменений кода, делает коммиты с понятными описаниями на русском языке
@@ -20,12 +20,16 @@
 
 ```
 src/garmin_backup_bot/
-├── bot.py              # ~2400 строк. Telegram-хендлеры, клавиатура, джобы
-├── analyst.py          # ~2500 строк. Claude-анализ, системные промпты, tool use (SQL)
-├── plan_builder.py     # ~1200 строк. Генерация планов, тип недели (recovery/base/build/peak/taper)
-├── garmin_service.py   # ~1060 строк. Синхронизация Garmin Connect, сбор метрик
-├── storage.py          # ~700 строк. SQLite CRUD, 13 таблиц
-├── nutrition.py        # ~420 строк. Распознавание еды (Claude Vision), ISSN-нормы
+├── bot.py              # ~4900 строк. Telegram-хендлеры, клавиатура, джобы, write-tool коллбеки
+├── analyst.py          # ~1500 строк. Движок Claude: _generate_text, tool-цикл, analyze*/ask
+├── formatting.py       # ~950 строк. FormattingMixin — сборка текстовых блоков контекста
+├── prompts.py          # ~530 строк. Системные промпты (статический текст без логики)
+├── tools.py            # ~330 строк. SQL-раннер (read-only, изоляция user_id) + схемы tools
+├── coach.py            # ~900 строк. Детерминированная логика тренера: пороги, факты, валидация дат плана
+├── plan_builder.py     # ~1700 строк. Генерация планов, тип недели (recovery/base/build/peak/taper)
+├── garmin_service.py   # ~2000 строк. Синхронизация Garmin Connect (garth), сбор метрик
+├── storage.py          # ~1100 строк. SQLite CRUD, 15 таблиц
+├── nutrition.py        # ~700 строк. Распознавание еды (Claude Vision), ISSN-нормы
 ├── webapp.py           # FastAPI — форма для Garmin credentials (порт 8085)
 ├── transcription.py    # OpenAI Whisper voice-to-text
 ├── config.py           # Загрузка .env → Settings dataclass
@@ -37,8 +41,10 @@ src/garmin_backup_bot/
 
 - `main.py` создаёт `GarminService`, `HealthAnalyst`, `PlanBuilder`, `NutritionAnalyzer`, `Transcriber` и передаёт в `bot.py`
 - `bot.py` вызывает `analyst.py` для AI-анализа, `plan_builder.py` для планов, `nutrition.py` для еды
+- `analyst.py` = движок; его куски: `formatting.py` (FormattingMixin, методы доступны через self), `prompts.py` (константы + build_ask_stable_prompt), `tools.py` (make_sql_runner, build_tool_schemas)
+- При правке промптов — `prompts.py`; при правке блоков контекста — `formatting.py`; при добавлении tool'а — схема в `tools.py` + коллбек в `bot.py` + правило в промпте
 - `garmin_service.py` читает/пишет per-user SQLite БД в `data/users/{id}/DBs/`
-- `storage.py` управляет `data/app.db` (credentials, планы, еда, история, профили)
+- `storage.py` управляет `data/app.db` (credentials, планы, еда, история, профили, token_usage)
 
 ## Источники истины
 
