@@ -275,6 +275,10 @@ class FormattingMixin:
         parts: list[str] = []
         target_date = metrics.get("date", "?")
         parts.append(f"=== ДАННЫЕ GARMIN за {target_date} ===\n")
+        # Календарь дней недели обязателен и в QA: без него Claude выводит день
+        # недели сам и ошибается (инцидент 06.07.2026 — «сегодня воскресенье»
+        # в понедельник; в QA был только ISO «Сегодня: 2026-07-06»).
+        parts.append(self._calendar_block(target_date))
 
         # Fitness profile (zones, VO2max, LTHR) — always needed for interpretation
         fp = metrics.get("fitness_profile")
