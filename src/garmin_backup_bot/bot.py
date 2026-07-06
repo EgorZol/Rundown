@@ -269,6 +269,8 @@ class GarminBot:
         # по одному на весь бот: несколько параллельных первичных синков
         # с одного IP — почти гарантированный 429/бан от Garmin.
         self._initial_sync_sem = asyncio.Semaphore(1)
+        # Дедуп для _on_error: сигнатура ошибки → {"sent_at", "suppressed"}
+        self._error_dedup: dict[str, dict] = {}
         self._register_handlers()
         self._schedule_reminders()
 
@@ -389,8 +391,48 @@ class GarminBot:
                 # 08:00–08:14 window → daily training reminder
                 if hh == 8 and mm < 15:
                     await self._daily_reminder_for_user(user_id, context)
+                # 09:00–09:14 window → проверка «тихой деградации» синка
+                if hh == 9 and mm < 15:
+                    await self._sync_health_check_for_user(user_id, context)
             except Exception as exc:
                 logger.debug("Periodic tick failed for user %d: %s", user_id, exc)
+
+    async def _sync_health_check_for_user(self, user_id: int, context: CallbackContext) -> None:
+        """Алерт владельцу, если Garmin-данные юзера протухли, а юзер активен.
+
+        Ловит «тихие» деградации, которые не исключения: протухший пароль Garmin,
+        молча падающий синк (широкие try/except глотают ошибки в data-дырку).
+        """
+        today_key = f"synccheck_{user_id}_{date.today().isoformat()}"
+        if context.bot_data.get(today_key):
+            return
+        context.bot_data[today_key] = True
+        last_day = await asyncio.to_thread(self._service.last_health_day, user_id)
+        if last_day is None:
+            return  # ещё ни разу не синкался — это не деградация
+        tz = self._get_user_tz(user_id)
+        stale_days = (datetime.now(tz).date() - date.fromisoformat(last_day)).days
+        if stale_days < 3:
+            return
+        # Заброшенные юзеры не в счёт: алертим только если юзер жив в боте
+        last_event = await asyncio.to_thread(self._storage.last_event_at, user_id)
+        if not last_event:
+            return
+        try:
+            idle_days = (datetime.now(tz) - datetime.fromisoformat(last_event).astimezone(tz)).days
+        except ValueError:
+            return
+        if idle_days > 7:
+            return
+        for admin_id in self._admin_user_ids:
+            with contextlib.suppress(Exception):
+                await context.bot.send_message(
+                    admin_id,
+                    f"⚠️ Синк юзера {user_id}: в garmin.db нет данных с {last_day} "
+                    f"({stale_days} дн.), при этом юзер активен в боте "
+                    f"(последнее действие {idle_days} дн. назад). Возможно протух "
+                    f"пароль Garmin или синк тихо падает — проверь journalctl.",
+                )
 
     async def _daily_reminder_for_user(self, user_id: int, context: CallbackContext) -> None:
         """Send daily training reminder for a single user."""
@@ -502,7 +544,47 @@ class GarminBot:
             from .analyst import CURRENT_USER_ID
             CURRENT_USER_ID.set(user.id)
 
+    async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Глобальный error handler: traceback владельцу в Telegram («Sentry» на минималках).
+
+        Без него исключения мимо try/except в хендлерах видны только в journalctl —
+        сбои у других юзеров оставались незамеченными. Дедуп: одна сигнатура —
+        не чаще раза в час, повторы считаются и упоминаются при следующей отправке.
+        """
+        err = getattr(context, "error", None)
+        if err is None:
+            return
+        logger.error("Unhandled error in handler", exc_info=err)
+        if not self._admin_user_ids:
+            return
+        try:
+            import traceback as _tb
+            sig = f"{type(err).__name__}: {str(err)[:120]}"
+            now = time.monotonic()
+            entry = self._error_dedup.get(sig)
+            if entry and now - entry["sent_at"] < 3600:
+                entry["suppressed"] += 1
+                return
+            suppressed = entry["suppressed"] if entry else 0
+            self._error_dedup[sig] = {"sent_at": now, "suppressed": 0}
+            tb_text = "".join(_tb.format_exception(type(err), err, err.__traceback__))[-1500:]
+            user = getattr(update, "effective_user", None)
+            uid = f"{user.id} (@{user.username})" if user else "—"
+            msg_obj = getattr(update, "effective_message", None)
+            src_text = (getattr(msg_obj, "text", None) or "—")[:80]
+            text = (
+                f"🚨 Ошибка бота\nЮзер: {uid}\nСообщение: {src_text}\n"
+                + (f"Подавлено повторов за час: {suppressed}\n" if suppressed else "")
+                + f"\n…{tb_text}"
+            )
+            for admin_id in self._admin_user_ids:
+                with contextlib.suppress(Exception):
+                    await context.bot.send_message(admin_id, text[:4000])
+        except Exception:
+            logger.exception("_on_error сам упал — подавляю")
+
     def _register_handlers(self) -> None:
+        self._app.add_error_handler(self._on_error)
         self._app.add_handler(TypeHandler(Update, self._set_user_context), group=-1)
         self._app.add_handler(CommandHandler("start", self.start))
         self._app.add_handler(CommandHandler("link_garmin", self.link_garmin))

@@ -323,6 +323,21 @@ class GarminService:
         except Exception:
             return True
 
+    def last_health_day(self, user_id: int) -> str | None:
+        """Последний день с данными в garmin.db (MAX(day) в daily_summary) или None.
+
+        Используется алертом «тихой деградации синка» в bot._sync_health_check.
+        """
+        db = self._workdir_root / str(user_id) / "DBs" / "garmin.db"
+        if not db.exists():
+            return None
+        try:
+            with sqlite3.connect(db, timeout=5) as conn:
+                row = conn.execute("SELECT MAX(day) FROM daily_summary").fetchone()
+                return row[0] if row and row[0] else None
+        except Exception:
+            return None
+
     def _get_sync_range(self, user_id: int) -> tuple[date, date]:
         """Determine sync start and end dates.
         Initial sync uses GARMIN_START_DATE env, incremental uses last 14 days."""

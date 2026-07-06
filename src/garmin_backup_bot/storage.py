@@ -477,6 +477,14 @@ class Storage:
             )
         return int(row[0]) if row else None
 
+    def last_event_at(self, user_id: int) -> str | None:
+        """ISO-время последнего usage-события юзера (маркер «живости») или None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT MAX(event_at) FROM usage_events WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return row[0] if row and row[0] else None
+
     def track_event(self, user_id: int, event_name: str) -> None:
         now_iso = datetime.now(timezone.utc).isoformat()
         with self._connect() as conn:

@@ -138,6 +138,17 @@ class TestTokenUsage(StorageTestCase):
         self.assertEqual(by_uid[None]["output_tokens"], 30)
 
 
+class TestUsageEvents(StorageTestCase):
+    def test_last_event_at(self):
+        self.assertIsNone(self.storage.last_event_at(UID))
+        self.storage.track_event(UID, "morning")
+        self.storage.track_event(UID, "question")
+        last = self.storage.last_event_at(UID)
+        self.assertIsNotNone(last)
+        self.assertIn("T", last)  # ISO-формат
+        self.assertIsNone(self.storage.last_event_at(UID + 1))
+
+
 class TestRaces(StorageTestCase):
     def test_race_lifecycle(self):
         rid = self.storage.save_race(UID, "2026-09-27", "Марафон", 42.2, "3:29:00")

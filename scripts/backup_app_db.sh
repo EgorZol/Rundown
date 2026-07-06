@@ -78,3 +78,17 @@ EOF
     # Rotation: каталоги старше USERS_KEEP_DAYS дней
     find "${BACKUP_DIR}/users" -maxdepth 1 -mindepth 1 -type d -mtime "+${USERS_KEEP_DAYS}" -print -exec rm -rf {} +
 fi
+
+# ── Offsite: зеркало каталога бэкапов в Google Drive (rclone, scope=drive.file)
+# sync = ротация локальная зеркалится в Drive. Сбой offsite НЕ валит локальный
+# бэкап (|| warning) — например при протухшем токене или недоступном Google.
+if command -v rclone >/dev/null && rclone listremotes 2>/dev/null | grep -q '^gdrive:'; then
+    if rclone sync "${BACKUP_DIR}" "gdrive:garmin-backups" \
+            --transfers 2 --checkers 2 --drive-chunk-size 32M -q; then
+        echo "offsite: синхронизировано в gdrive:garmin-backups"
+    else
+        echo "offsite: ОШИБКА rclone sync — локальный бэкап цел, проверь токен" >&2
+    fi
+else
+    echo "offsite: rclone/gdrive не настроен, пропускаю" >&2
+fi
