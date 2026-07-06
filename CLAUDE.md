@@ -184,6 +184,8 @@ data.get("items") or []
 | Синтаксис | `python3 -c "import ast; ast.parse(open(f).read())"` | После каждого изменения .py |
 | Импорты | `.venv/bin/python3 -c "from src.garmin_backup_bot.main import main"` | После изменения сигнатур/импортов |
 | Тесты | `.venv/bin/python -m unittest discover tests -q` | ОБЯЗАТЕЛЬНО перед каждым коммитом (coach/storage/tools/formatting покрыты; новая логика в этих модулях — с тестом) |
+
+CI: pre-commit hook (`.githooks/pre-commit`, включается `git config core.hooksPath .githooks` — уже настроено) блокирует коммит при красных тестах; GitHub Actions (`.github/workflows/tests.yml`) гоняет тесты на push. Обход хука в крайнем случае — `git commit --no-verify`.
 | Перезапуск | `systemctl --user restart garmin-backup-bot.service` | После изменения кода бота |
 | Статус | `systemctl --user status garmin-backup-bot.service` | После перезапуска |
 | Логи | `journalctl --user -u garmin-backup-bot -n 30` | При ошибках |

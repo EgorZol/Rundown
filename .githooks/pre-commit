@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Прогон тестов перед каждым коммитом (см. CLAUDE.md «Верификация изменений»).
+# Обойти в крайнем случае: git commit --no-verify
+set -e
+cd "$(git rev-parse --show-toplevel)"
+if ! .venv/bin/python -m unittest discover tests -q 2>&1 | tail -3; then
+    echo ""
+    echo "❌ Тесты не прошли — коммит заблокирован."
+    exit 1
+fi
