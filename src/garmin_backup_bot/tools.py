@@ -300,6 +300,58 @@ def build_tool_schemas(
             },
         })
 
+    if write_tools and "add_race" in write_tools:
+        tools.append({
+            "name": "add_race",
+            "description": (
+                "Добавь ПРЕДСТОЯЩУЮ гонку в календарь стартов (таблица races). "
+                "Вызывай когда юзер говорит «добавь забег/гонку/марафон <название> <дата>». "
+                "race_date СТРОГО YYYY-MM-DD — год бери из блока КАЛЕНДАРЬ, не выдумывай. "
+                "Дубль по дате+названию отсекается автоматически. "
+                "Для ПРОШЕДШЕГО старта с временем — set_race_result, не add_race."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "race_date": {"type": "string", "description": "YYYY-MM-DD"},
+                    "name": {"type": "string"},
+                    "distance_km": {"type": "number", "description": "дистанция в км, если известна"},
+                    "goal_time": {"type": "string", "description": "целевое время H:MM:SS, если названо"},
+                    "notes": {"type": "string", "description": "заметка: трейл/шоссе, «бежать легко» и т.п."},
+                },
+                "required": ["race_date", "name"],
+            },
+        })
+    if write_tools and "delete_race" in write_tools:
+        tools.append({
+            "name": "delete_race",
+            "description": (
+                "Удали гонку из календаря. Вызывай на «удали забег #N» или однозначное "
+                "«убери марафон из стартов». race_id — из блока «ПРЕДСТОЯЩИЕ СТАРТЫ» (#N). "
+                "Если id не очевиден — сначала уточни у юзера, не угадывай."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"race_id": {"type": "integer"}},
+                "required": ["race_id"],
+            },
+        })
+    if write_tools and "set_race_priority" in write_tools:
+        tools.append({
+            "name": "set_race_priority",
+            "description": (
+                "Пометь гонку как A-гонку (главный старт, ведёт периодизацию плана) "
+                "или сними пометку. «Это моя главная гонка» → is_priority=true."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "race_id": {"type": "integer"},
+                    "is_priority": {"type": "boolean", "default": True},
+                },
+                "required": ["race_id"],
+            },
+        })
     if save_plan_fn is not None:
         tools.append({
             "name": "save_weekly_plan",

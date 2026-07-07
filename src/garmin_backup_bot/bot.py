@@ -544,6 +544,13 @@ class GarminBot:
             from .analyst import CURRENT_USER_ID
             CURRENT_USER_ID.set(user.id)
 
+    async def help_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Справка о возможностях — рендерится из prompts.CAPABILITIES (единый источник)."""
+        self._track_event(update, "help")
+        from .prompts import help_text
+        for chunk in self._split(help_text()):
+            await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
+
     async def _on_error(self, update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Глобальный error handler: traceback владельцу в Telegram («Sentry» на минималках).
 
@@ -587,6 +594,7 @@ class GarminBot:
         self._app.add_error_handler(self._on_error)
         self._app.add_handler(TypeHandler(Update, self._set_user_context), group=-1)
         self._app.add_handler(CommandHandler("start", self.start))
+        self._app.add_handler(CommandHandler("help", self.help_cmd))
         self._app.add_handler(CommandHandler("link_garmin", self.link_garmin))
         self._app.add_handler(CommandHandler("status", self.status))
         self._app.add_handler(CommandHandler("remember", self.remember))
@@ -686,6 +694,7 @@ class GarminBot:
             f"  {BTN_PLAN} — план на неделю\n"
             f"  {BTN_WEEKLY} — разбор недели\n"
             f"  {BTN_FOOD} — записать приём пищи\n\n"
+            "Полный список возможностей — /help\n"
             "Я помню всю твою историю: тренировки, сон, форму, цели.\n"
             "Если я ошибусь — просто поправь словами, я запомню."
         )
@@ -3185,6 +3194,36 @@ class GarminBot:
             tool_actions.append({"kind": "race_result", "id": int(race_id), "time": actual_time})
             return f"OK: результат #{race_id} = {actual_time}"
 
+        def _add_race_fn(race_date: str, name: str, distance_km: float | None = None,
+                         goal_time: str | None = None, notes: str | None = None) -> str:
+            try:
+                datetime.fromisoformat(race_date)
+            except Exception:
+                return "[ошибка: race_date должен быть YYYY-MM-DD, получил '%s']" % race_date
+            name = (name or "").strip()
+            if not name:
+                return "[ошибка: пустое название гонки]"
+            for r in self._storage.get_races(user_id):
+                if r["date"] == race_date and r["name"].strip().lower() == name.lower():
+                    return f"[гонка уже в календаре: #{r['id']} {race_date} — {name}]"
+            rid = self._storage.save_race(user_id, race_date, name, distance_km, goal_time, notes)
+            tool_actions.append({"kind": "race_add", "id": rid, "date": race_date, "name": name})
+            return f"OK: гонка #{rid} добавлена ({race_date} — {name})"
+
+        def _delete_race_fn(race_id: int) -> str:
+            ok = self._storage.delete_race(user_id, int(race_id))
+            if not ok:
+                return f"[гонка #{race_id} не найдена]"
+            tool_actions.append({"kind": "race_del", "id": int(race_id)})
+            return f"OK: гонка #{race_id} удалена"
+
+        def _set_race_priority_fn(race_id: int, is_priority: bool = True) -> str:
+            ok = self._storage.set_race_priority(user_id, int(race_id), bool(is_priority))
+            if not ok:
+                return f"[гонка #{race_id} не найдена]"
+            tool_actions.append({"kind": "race_priority", "id": int(race_id), "on": bool(is_priority)})
+            return f"OK: гонка #{race_id} — " + ("A-гонка" if is_priority else "приоритет снят")
+
         def _record_feeling_fn(score: int, note: str | None = None) -> str:
             try:
                 score = int(score)
@@ -3242,6 +3281,9 @@ class GarminBot:
             "set_race_result": _set_race_result_fn,
             "record_feeling": _record_feeling_fn,
             "set_training_goal": _set_training_goal_fn,
+            "add_race": _add_race_fn,
+            "delete_race": _delete_race_fn,
+            "set_race_priority": _set_race_priority_fn,
         }
 
         # Stage 5: считаем факты дня и недели в коде, подаём Claude как готовые блоки
@@ -3328,6 +3370,12 @@ class GarminBot:
                     lines.append(f"🗑 Удалил заметку #{a['id']}")
                 elif k == "race_result":
                     lines.append(f"🏁 Результат гонки #{a['id']}: {a['time']}")
+                elif k == "race_add":
+                    lines.append(f"🏁 Гонка #{a['id']} в календаре: {a['date']} — {a['name']}")
+                elif k == "race_del":
+                    lines.append(f"🗑 Гонка #{a['id']} удалена из календаря")
+                elif k == "race_priority":
+                    lines.append(f"⭐ Гонка #{a['id']}: " + ("A-гонка (главный старт)" if a["on"] else "приоритет снят"))
                 elif k == "feeling":
                     lines.append(f"📝 Самочувствие за сегодня: {a['score']}/5")
                 elif k == "goal":
@@ -3599,6 +3647,7 @@ class GarminBot:
 
 _BOT_COMMANDS = [
     BotCommand("start", "С чего начать"),
+    BotCommand("help", "Что умеет бот"),
     BotCommand("link_garmin", "Подключить Garmin"),
     BotCommand("plan", "Недельный план"),
     BotCommand("goal", "Поставить цель"),

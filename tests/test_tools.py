@@ -93,11 +93,15 @@ class TestToolSchemas(unittest.TestCase):
     def test_write_tools_added_with_callbacks(self):
         wt = {k: (lambda **kw: "OK") for k in
               ("confirm_fact", "remember_note", "forget_note",
-               "set_race_result", "record_feeling", "set_training_goal")}
+               "set_race_result", "record_feeling", "set_training_goal",
+               "add_race", "delete_race", "set_race_priority")}
         names = [t["name"] for t in build_tool_schemas(save_plan_fn=lambda p, w: "OK",
                                                        write_tools=wt)]
-        self.assertEqual(len(names), 10)
+        self.assertEqual(len(names), 13)
         self.assertIn("save_weekly_plan", names)
+        self.assertIn("add_race", names)
+        self.assertIn("delete_race", names)
+        self.assertIn("set_race_priority", names)
         for t in build_tool_schemas(save_plan_fn=lambda p, w: "OK", write_tools=wt):
             self.assertIn("input_schema", t)
             self.assertIn("description", t)
