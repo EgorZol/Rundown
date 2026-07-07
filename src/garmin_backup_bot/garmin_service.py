@@ -307,21 +307,35 @@ class GarminService:
                 """
             )
 
+    def _domain_empty(self, user_id: int, domain: str) -> bool:
+        """True, если у домена ('health' | 'activities') ещё нет данных.
+
+        КАЖДЫЙ домен проверяет СВОЮ таблицу. Инцидент Саши (07.2026): проверка
+        шла по sleep для обоих доменов; в «Утро» health-синк заполнял sleep,
+        и активити-синк через минуту считал себя инкрементальным → качал
+        14 дней вместо годовой истории активностей.
+        """
+        db_name, table = (
+            ("garmin.db", "sleep") if domain == "health"
+            else ("garmin_activities.db", "activities")
+        )
+        path = self._workdir_root / str(user_id) / "DBs" / db_name
+        if not path.exists():
+            return True
+        try:
+            with sqlite3.connect(path, timeout=5) as conn:
+                row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+                return not (row and row[0] > 0)
+        except Exception:
+            return True
+
     def is_initial_sync_pending(self, user_id: int) -> bool:
-        """True, если у юзера ещё не было health-синка (garmin.db пуст).
+        """True, если хоть одному домену предстоит первичный синк.
 
         Первичный синк тяжёлый (~365 дней, сотни HTTP-запросов к Garmin) —
         bot.py пускает такие строго по одному, чтобы не словить 429/бан IP.
         """
-        garmin_db = self._workdir_root / str(user_id) / "DBs" / "garmin.db"
-        if not garmin_db.exists():
-            return True
-        try:
-            with sqlite3.connect(garmin_db, timeout=5) as conn:
-                row = conn.execute("SELECT COUNT(*) FROM sleep").fetchone()
-                return not (row and row[0] > 0)
-        except Exception:
-            return True
+        return self._domain_empty(user_id, "health") or self._domain_empty(user_id, "activities")
 
     def last_health_day(self, user_id: int) -> str | None:
         """Последний день с данными в garmin.db (MAX(day) в daily_summary) или None.
@@ -338,12 +352,12 @@ class GarminService:
         except Exception:
             return None
 
-    def _get_sync_range(self, user_id: int) -> tuple[date, date]:
+    def _get_sync_range(self, user_id: int, domain: str = "health") -> tuple[date, date]:
         """Determine sync start and end dates.
         Initial sync uses GARMIN_START_DATE env, incremental uses last 14 days."""
         today = date.today()
 
-        if not self.is_initial_sync_pending(user_id):
+        if not self._domain_empty(user_id, domain):
             start_date = today - timedelta(days=14)
             logger.info("Incremental sync: syncing last 14 days (%s to %s)", start_date, today)
             return start_date, today
@@ -371,7 +385,7 @@ class GarminService:
         from garth import SleepData, WeightData, UserProfile, DailyBodyBatteryStress  # type: ignore
 
         garth_client = self._garth_login(username, password, output_dir)
-        start_date, end_date = self._get_sync_range(user_id)
+        start_date, end_date = self._get_sync_range(user_id, domain="health")
         delta_days = (end_date - start_date).days + 1
 
         # 1. Sync Sleep list in one request
@@ -533,7 +547,7 @@ class GarminService:
         self._init_user_dbs(user_id)
         
         garth_client = self._garth_login(username, password, output_dir)
-        start_date, end_date = self._get_sync_range(user_id)
+        start_date, end_date = self._get_sync_range(user_id, domain="activities")
         
         logger.info("Fetching activities list paging since %s...", start_date)
         activities = []
