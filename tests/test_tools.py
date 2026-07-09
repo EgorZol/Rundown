@@ -94,10 +94,11 @@ class TestToolSchemas(unittest.TestCase):
         wt = {k: (lambda **kw: "OK") for k in
               ("confirm_fact", "remember_note", "forget_note",
                "set_race_result", "record_feeling", "set_training_goal",
-               "add_race", "delete_race", "set_race_priority")}
+               "add_race", "delete_race", "set_race_priority", "retract_fact")}
         names = [t["name"] for t in build_tool_schemas(save_plan_fn=lambda p, w: "OK",
                                                        write_tools=wt)]
-        self.assertEqual(len(names), 13)
+        self.assertEqual(len(names), 14)
+        self.assertIn("retract_fact", names)
         self.assertIn("save_weekly_plan", names)
         self.assertIn("add_race", names)
         self.assertIn("delete_race", names)

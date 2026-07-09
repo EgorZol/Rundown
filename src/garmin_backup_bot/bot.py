@@ -2022,6 +2022,10 @@ class GarminBot:
                     logger.warning("Activity sync error (will use cached data): %s", exc)
 
                 activities = await asyncio.to_thread(self._service.collect_recent_activities, user_id, days=14)
+                # «Основная» активность дня — бег, а не последняя по времени
+                # (иначе при дне «бег → силовая → заминка» разбор достаётся заминке)
+                from . import coach as _coach_reorder
+                activities = _coach_reorder.reorder_primary_activity(activities)
                 # Health state for workout context: same date logic as morning report.
                 # daily_summary from yesterday (complete day), sleep from today (wake date = today = last night).
                 today = datetime.now(self._get_user_tz(user_id)).date()
@@ -3194,6 +3198,13 @@ class GarminBot:
             tool_actions.append({"kind": "race_result", "id": int(race_id), "time": actual_time})
             return f"OK: результат #{race_id} = {actual_time}"
 
+        def _retract_fact_fn(fact_id: int) -> str:
+            ok = self._storage.deactivate_verified_fact(user_id, int(fact_id))
+            if not ok:
+                return f"[факт #{fact_id} не найден или уже отозван]"
+            tool_actions.append({"kind": "fact_retract", "id": int(fact_id)})
+            return f"OK: факт #{fact_id} отозван"
+
         def _add_race_fn(race_date: str, name: str, distance_km: float | None = None,
                          goal_time: str | None = None, notes: str | None = None) -> str:
             try:
@@ -3284,6 +3295,7 @@ class GarminBot:
             "add_race": _add_race_fn,
             "delete_race": _delete_race_fn,
             "set_race_priority": _set_race_priority_fn,
+            "retract_fact": _retract_fact_fn,
         }
 
         # Stage 5: считаем факты дня и недели в коде, подаём Claude как готовые блоки
@@ -3363,6 +3375,8 @@ class GarminBot:
                 k = a["kind"]
                 if k == "fact":
                     lines.append(f"✅ Принял как факт ({a['date']}): {a['text']}")
+                elif k == "fact_retract":
+                    lines.append(f"↩️ Факт #{a['id']} отозван")
                 elif k == "remember":
                     exp = f" (до {a['expires_at']})" if a.get("expires_at") else ""
                     lines.append(f"💾 Запомнил #{a['id']}: {a['text']}{exp}")

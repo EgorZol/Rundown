@@ -89,6 +89,14 @@ class TestVerifiedFacts(StorageTestCase):
         facts = self.storage.list_verified_facts(UID, since_date="2026-07-01")
         self.assertEqual(len(facts), 1)
 
+    def test_retract_fact(self):
+        fid = self.storage.add_verified_fact(UID, "2026-07-09", "бег 6 км")
+        self.assertTrue(self.storage.deactivate_verified_fact(UID, fid))
+        # повторный отзыв и чужой user_id — False
+        self.assertFalse(self.storage.deactivate_verified_fact(UID, fid))
+        self.assertFalse(self.storage.deactivate_verified_fact(UID + 1, fid))
+        self.assertEqual(self.storage.list_verified_facts(UID, since_date="2026-07-01"), [])
+
     def test_different_date_or_text_is_new_fact(self):
         a = self.storage.add_verified_fact(UID, "2026-07-06", "бег 7 км")
         b = self.storage.add_verified_fact(UID, "2026-07-07", "бег 7 км")

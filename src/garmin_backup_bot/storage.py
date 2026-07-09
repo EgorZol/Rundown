@@ -841,6 +841,16 @@ class Storage:
             )
             return int(cur.lastrowid)
 
+    def deactivate_verified_fact(self, user_id: int, fact_id: int) -> bool:
+        """Отзыв факта (soft-delete). Для write-tool retract_fact: исправление
+        факта = отзыв старого + confirm нового, иначе копятся противоречия."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE verified_facts SET is_active = 0 WHERE id = ? AND user_id = ? AND is_active = 1",
+                (fact_id, user_id),
+            )
+            return cur.rowcount > 0
+
     def list_verified_facts(
         self, user_id: int, since_date: str | None = None
     ) -> list[dict]:

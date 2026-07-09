@@ -905,3 +905,51 @@ def fix_plan_dates(plan_text: str, week_start: date) -> tuple[str, int]:
         return f"{abbr} {want}"
 
     return _PLAN_DAY_RE.sub(_sub, plan_text), fixes
+
+
+# ============================================================================
+# ВЫБОР «ОСНОВНОЙ» АКТИВНОСТИ ДНЯ для «🏃 Разбор».
+# Жалоба Алины 09.07.2026: при нескольких тренировках в день (бег → силовая →
+# заминка) разбор доставался последней по времени — 16-минутной заминке.
+# ============================================================================
+
+RUN_SPORTS = frozenset((
+    "running", "trail_running", "track_running",
+    "treadmill_running", "indoor_running",
+))
+
+
+def _elapsed_secs(a: dict) -> int:
+    """'H:MM:SS' → секунды; мусор/None → 0."""
+    raw = a.get("elapsed_time") or ""
+    parts = str(raw).split(":")
+    try:
+        parts = [int(float(p)) for p in parts]
+    except ValueError:
+        return 0
+    if len(parts) == 3:
+        return parts[0] * 3600 + parts[1] * 60 + parts[2]
+    if len(parts) == 2:
+        return parts[0] * 60 + parts[1]
+    return 0
+
+
+def reorder_primary_activity(activities: list[dict]) -> list[dict]:
+    """Ставит «основную» активность последнего дня на позицию #1 (⟵ ОСНОВНАЯ).
+
+    Правило: в пределах самого свежего дня с активностями основная — бег
+    с максимальной дистанцией; если бега не было — самая долгая активность.
+    Порядок остальных не меняется. Пустой список → пустой список.
+    """
+    if not activities:
+        return activities
+    last_day = (activities[0].get("start_time") or "")[:10]
+    day_acts = [a for a in activities if (a.get("start_time") or "")[:10] == last_day]
+    runs = [a for a in day_acts if a.get("sport") in RUN_SPORTS]
+    if runs:
+        primary = max(runs, key=lambda a: a.get("distance") or 0)
+    else:
+        primary = max(day_acts, key=_elapsed_secs)
+    if primary is activities[0]:
+        return activities
+    return [primary] + [a for a in activities if a is not primary]

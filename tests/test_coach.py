@@ -414,5 +414,43 @@ class TestPlanDates(unittest.TestCase):
         self.assertEqual(fixed, plan)
 
 
+class TestPrimaryActivity(unittest.TestCase):
+    """Регресс жалобы Алины 09.07.2026: разбор доставался 16-мин заминке."""
+
+    ALINA_DAY = [  # newest first, как отдаёт collect_recent_activities
+        {"start_time": "2026-07-09T09:59:32.0", "name": "Корр и заминка", "sport": "indoor_cardio",
+         "distance": 0.0, "elapsed_time": "00:16:03"},
+        {"start_time": "2026-07-09T09:02:40.0", "name": "функц. силовая", "sport": "indoor_cardio",
+         "distance": 0.0, "elapsed_time": "00:56:03"},
+        {"start_time": "2026-07-09T08:02:37.0", "name": "Бег до тренировок", "sport": "running",
+         "distance": 6.0, "elapsed_time": "00:36:46"},
+        {"start_time": "2026-07-08T15:28:09.0", "name": "Ходьба", "sport": "walking",
+         "distance": 4.2, "elapsed_time": "00:49:11"},
+    ]
+
+    def test_run_becomes_primary(self):
+        out = coach.reorder_primary_activity(list(self.ALINA_DAY))
+        self.assertEqual(out[0]["name"], "Бег до тренировок")
+        self.assertEqual(len(out), 4)
+        # прошлые дни не рассматриваются как кандидаты
+        self.assertEqual(out[-1]["name"], "Ходьба")
+
+    def test_no_runs_longest_wins(self):
+        day = [a for a in self.ALINA_DAY if a["sport"] != "running"][:2]
+        out = coach.reorder_primary_activity(list(day))
+        self.assertEqual(out[0]["name"], "функц. силовая")
+
+    def test_single_activity_unchanged(self):
+        one = [self.ALINA_DAY[2]]
+        self.assertEqual(coach.reorder_primary_activity(list(one)), one)
+
+    def test_latest_already_primary_unchanged(self):
+        acts = [self.ALINA_DAY[2], self.ALINA_DAY[3]]  # бег и вчерашняя ходьба
+        self.assertEqual(coach.reorder_primary_activity(list(acts))[0]["name"], "Бег до тренировок")
+
+    def test_empty(self):
+        self.assertEqual(coach.reorder_primary_activity([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -300,6 +300,23 @@ def build_tool_schemas(
             },
         })
 
+    if write_tools and "retract_fact" in write_tools:
+        tools.append({
+            "name": "retract_fact",
+            "description": (
+                "Отзови (деактивируй) ранее сохранённый факт по его #id из блока "
+                "«ПОДТВЕРЖДЁННЫЕ АТЛЕТОМ ФАКТЫ». ОБЯЗАТЕЛЕН при исправлении: если юзер "
+                "поправляет уже зафиксированный факт («на самом деле было не так») — "
+                "СНАЧАЛА retract_fact(старый #id), ПОТОМ confirm_fact(новая версия). "
+                "Иначе в базе останутся два противоречащих факта за одну дату "
+                "(инцидент 09.07: три взаимоисключающих факта про один день)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"fact_id": {"type": "integer"}},
+                "required": ["fact_id"],
+            },
+        })
     if write_tools and "add_race" in write_tools:
         tools.append({
             "name": "add_race",
