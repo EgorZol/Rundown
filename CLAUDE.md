@@ -20,7 +20,15 @@
 
 ```
 src/garmin_backup_bot/
-├── bot.py              # ~4900 строк. Telegram-хендлеры, клавиатура, джобы, write-tool коллбеки
+├── bot.py              # ~460 строк. Фасад GarminBot: __init__, регистрация хендлеров, core-команды, вебапп
+├── bot_common.py       # ~110 строк. Кнопки BTN_*, клавиатуры, _api_error_msg (без зависимостей от миксинов)
+├── bot_food.py         # ~575 строк. FoodMixin: еда (фото/голос/текст), отчёт питания, калории
+├── bot_reports.py      # ~990 строк. ReportsMixin: утро/разбор/план(+твики)/форма/прогресс/итоги/рекорды
+├── bot_qa.py           # ~680 строк. QAMixin: handle_question + все write-tools (замыкания) + invoke_action
+├── bot_races.py        # ~420 строк. RacesMixin: цель, календарь стартов, самочувствие
+├── bot_profile.py      # ~290 строк. ProfileMixin: анкета, часовой пояс, сброс профиля
+├── bot_memory.py       # ~260 строк. MemoryMixin: заметки user_memory, теги [ЗАПОМНИТЬ]
+├── bot_jobs.py         # ~210 строк. JobsMixin: напоминания, алерты синка, _on_error, /admin_stats
 ├── analyst.py          # ~1500 строк. Движок Claude: _generate_text, tool-цикл, analyze*/ask
 ├── formatting.py       # ~950 строк. FormattingMixin — сборка текстовых блоков контекста
 ├── prompts.py          # ~530 строк. Системные промпты (статический текст без логики)
@@ -43,6 +51,7 @@ src/garmin_backup_bot/
 
 - `main.py` создаёт `GarminService`, `HealthAnalyst`, `PlanBuilder`, `NutritionAnalyzer`, `Transcriber` и передаёт в `bot.py`
 - `bot.py` вызывает `analyst.py` для AI-анализа, `plan_builder.py` для планов, `nutrition.py` для еды
+- `GarminBot` (фасад в `bot.py`) = миксины bot_food/races/memory/profile/reports/qa/jobs. Правишь домен → его bot_<домен>.py; новый хендлер регистрируй в `bot.py:_register_handlers`; кнопки/клавиатуры → `bot_common.py` (bot.py реэкспортирует BTN_* для тестов)
 - `analyst.py` = движок; его куски: `formatting.py` (FormattingMixin, методы доступны через self), `prompts.py` (константы + build_ask_stable_prompt), `tools.py` (make_sql_runner, build_tool_schemas)
 - При правке промптов — `prompts.py`; при правке блоков контекста — `formatting.py`; при добавлении tool'а — схема в `tools.py` + коллбек в `bot.py` + правило в промпте
 - `GarminService` (фасад в `garmin_service.py`) = `GarminSyncMixin` (запись: garth → SQLite) + `GarminMetricsMixin` (чтение). Правишь синк → `garmin_sync.py`, чтение метрик → `garmin_metrics.py`. Per-user БД в `data/users/{id}/DBs/`. Офлайн-страховка: `tests/test_garmin_fixtures.py` (патчит `garmin_sync.date`)
