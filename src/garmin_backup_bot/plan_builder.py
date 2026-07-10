@@ -237,99 +237,35 @@ class WeeklyPlanBuilder:
         except ValueError:
             logger.warning("determine_week_type: invalid date '%s', using today", target_date_str)
             today = date.today()
-        week_start = today - timedelta(days=6)
-        prev_week_start = today - timedelta(days=13)
+        # ── Окна для объёмных правил: ЗАВЕРШЁННЫЕ календарные недели ──
+        # Те же недели, что юзер видит в «📋 Итоги». До 10.07.2026 окна были
+        # скользящими (сегодня−6), и в начале недели вердикты расходились
+        # с отчётами; скользящий TL-спайк ложно срабатывал от воскресного лонга.
+        # Острая перегрузка покрыта ACWR ниже (atl/ctl обновляются ежедневно).
+        acts_pool = metrics.get("activities_28d") or activities_14d
+        this_monday = today - timedelta(days=today.weekday())
+        lw_start, lw_end = this_monday - timedelta(days=7), this_monday
+        pw_start = this_monday - timedelta(days=14)
 
-        cur_acts = [a for a in activities_14d if a.get("start_time", "") >= week_start.isoformat()]
-        prev_acts = [
-            a for a in activities_14d
-            if prev_week_start.isoformat() <= a.get("start_time", "") < week_start.isoformat()
-        ]
+        def _in(a, start, end):
+            return start.isoformat() <= a.get("start_time", "") < end.isoformat()
 
-        cur_tl = sum(a.get("training_load") or 0 for a in cur_acts)
-        prev_tl = sum(a.get("training_load") or 0 for a in prev_acts)
-        cur_km = sum(a.get("distance") or 0 for a in cur_acts if a.get("sport") == "running")
-        prev_km = sum(a.get("distance") or 0 for a in prev_acts if a.get("sport") == "running")
+        cur_tl = sum(a.get("training_load") or 0 for a in acts_pool if _in(a, lw_start, lw_end))
+        prev_tl = sum(a.get("training_load") or 0 for a in acts_pool if _in(a, pw_start, lw_start))
+        cur_km = sum(a.get("distance") or 0 for a in acts_pool
+                     if a.get("sport") == "running" and _in(a, lw_start, lw_end))
+        prev_km = sum(a.get("distance") or 0 for a in acts_pool
+                      if a.get("sport") == "running" and _in(a, pw_start, lw_start))
 
-        daily_trend = metrics.get("daily_trend_7d", [])
-        low_bb_days = sum(1 for d in daily_trend if (d.get("bb_max") or 100) < 50)
-        hrv_status = (metrics.get("hrv") or {}).get("status", "")
-
-        # ── HARD SAFETY RULES (highest priority — override everything including races) ──
-
-        # 1. RHR spike: rise >5 bpm from 7-day baseline = overreaching
-        rhr_data = metrics.get("resting_hr") or {}
-        rhr_today = rhr_data.get("resting_heart_rate")
-        rhr_baseline = None
-        if daily_trend and len(daily_trend) >= 3:
-            rhr_vals = sorted(d.get("rhr") for d in daily_trend if d.get("rhr"))
-            if rhr_vals:
-                rhr_baseline = rhr_vals[len(rhr_vals) // 2]  # median — resistant to outliers
-        if rhr_today and rhr_baseline and rhr_today > rhr_baseline + 5:
-            return "recovery", (
-                f"ЧСС покоя {rhr_today} — на {rhr_today - rhr_baseline:.0f} уд/мин выше нормы "
-                f"({rhr_baseline:.0f}) — принудительное восстановление"
-            ), 0.6
-
-        # 2. BB critically low for 3+ days
-        if low_bb_days >= 3:
-            return "recovery", f"BB ниже 50 в течение {low_bb_days} дней — принудительное восстановление", 0.6
-
-        # 3. HRV UNBALANCED + low BB = overload
-        bb_today = (metrics.get("daily_summary") or {}).get("bb_max", 100)
-        if hrv_status == "UNBALANCED" and bb_today < 60:
-            return "recovery", "HRV UNBALANCED + BB низкий — признак перегрузки", 0.6
-
-        # 4. Breathing rate spike: >2 breaths/min above 7-day average = early illness/overload
-        sleep_trend = metrics.get("sleep_trend_7d") or []
-        rr_vals = [d.get("avg_rr") for d in sleep_trend if d.get("avg_rr")]
-        if rr_vals and len(rr_vals) >= 3:
-            rr_avg = sum(rr_vals) / len(rr_vals)
-            rr_latest = rr_vals[-1]
-            if rr_latest > rr_avg + 2:
-                return "recovery", (
-                    f"ЧД ночью {rr_latest:.1f} — на {rr_latest - rr_avg:.1f} вд/мин выше нормы "
-                    f"({rr_avg:.1f}) — ранний маркер болезни/перегрузки"
-                ), 0.6
-
-        # 5. Subjective feelings ≤2 for 2+ consecutive days = forced rest
-        if feelings and len(feelings) >= 2:
-            recent_scores = [f["score"] for f in feelings[-3:]]
-            consecutive_low = 0
-            for s in reversed(recent_scores):
-                if s <= 2:
-                    consecutive_low += 1
-                else:
-                    break
-            if consecutive_low >= 2:
-                return "recovery", (
-                    f"Самочувствие ≤2 уже {consecutive_low} дня подряд — "
-                    "принудительное восстановление"
-                ), 0.6
-
-        # 6. Sleep deprivation: avg <6.5h over last 3+ days
-        sleep_hours: list[float] = []
-        for d in sleep_trend:
-            ts = d.get("total_sleep")
-            if ts:
-                # total_sleep stored as "HH:MM:SS" or seconds
-                try:
-                    if isinstance(ts, str) and ":" in ts:
-                        parts = ts.split(":")
-                        h = float(parts[0]) + float(parts[1]) / 60
-                    else:
-                        h = float(ts) / 3600  # assume seconds
-                    if h > 0:
-                        sleep_hours.append(h)
-                except (ValueError, IndexError):
-                    pass
-        if len(sleep_hours) >= 3:
-            avg_sl = sum(sleep_hours[-3:]) / len(sleep_hours[-3:])
-            if avg_sl < 6.5:
-                return "recovery", (
-                    f"Средний сон {avg_sl:.1f}ч за последние 3 ночи (<6.5ч) — "
-                    "недовосстановление, принудительный отдых"
-                ), 0.6
+        # ── HARD SAFETY (высший приоритет, override всего включая гонки) ──
+        # Все правила перегруза — в coach.overload_verdict (единый источник порогов).
+        verdict = coach.overload_verdict(
+            metrics,
+            activities_28d=metrics.get("activities_28d") or activities_14d,
+            feelings=feelings,
+        )
+        if verdict:
+            return "recovery", verdict.reason, verdict.volume_factor
 
         # ── POST-RACE RECOVERY (1 day rest per 3km of race distance) ──
         if past_races:
@@ -360,55 +296,6 @@ class WeeklyPlanBuilder:
                         f"{days_since} дн. назад) — норма {recovery_days} дн. отдыха "
                         f"(осталось {remaining} дн.). {phase_note}"
                     ), vf
-
-        # ── VO2max consecutive drop → forced recovery ──
-        vo2_hist = metrics.get("vo2max_history") or []
-        if len(vo2_hist) >= 4:
-            vo2_sorted = sorted(vo2_hist, key=lambda e: e["date"])
-            last4 = vo2_sorted[-4:]
-            drops = sum(
-                1 for i in range(1, len(last4))
-                if (last4[i].get("vo2_max") or 0) < (last4[i - 1].get("vo2_max") or 0)
-            )
-            if drops >= 3:
-                v_first = last4[0].get("vo2_max", "?")
-                v_last = last4[-1].get("vo2_max", "?")
-                return "recovery", (
-                    f"VO2max падает 3+ замера подряд ({v_first} → {v_last}) — "
-                    "признак перетренированности, принудительное восстановление"
-                ), 0.6
-
-        # 8. Running economy decline >5% over 4 weeks → recovery
-        run_28d = [a for a in activities_14d if a.get("sport") == "running"]
-        # Extend with activities from metrics if available (28d window)
-        run_28d_full = [a for a in (metrics.get("activities_28d") or []) if a.get("sport") == "running"]
-        if len(run_28d_full) > len(run_28d):
-            run_28d = run_28d_full
-        economy_vals: list[tuple[str, float]] = []
-        for a in run_28d:
-            avg_speed = a.get("avg_speed")
-            avg_hr = a.get("avg_hr")
-            if not avg_speed or avg_speed <= 0 or not avg_hr or avg_hr <= 0:
-                continue
-            zsecs = coach.garmin_zone_secs(a)
-            if zsecs:
-                total_z = sum(zsecs)
-                aero = zsecs[0] + zsecs[1] + zsecs[2]
-                if total_z > 0 and aero / total_z < 0.75:
-                    continue
-            elif (a.get("distance") or 0) > 12:
-                continue
-            economy_vals.append((a.get("start_time", "")[:10], avg_speed / avg_hr * 1000))
-        if len(economy_vals) >= 4:
-            economy_vals.sort(key=lambda x: x[0])
-            first_half = sum(e[1] for e in economy_vals[:len(economy_vals)//2]) / (len(economy_vals)//2)
-            second_half = sum(e[1] for e in economy_vals[len(economy_vals)//2:]) / (len(economy_vals) - len(economy_vals)//2)
-            econ_delta = (second_half - first_half) / first_half * 100 if first_half > 0 else 0
-            if econ_delta < -5:
-                return "recovery", (
-                    f"Экономичность бега снижается ({econ_delta:+.1f}% за 4 нед.) — "
-                    "признак накопленной усталости, принудительное восстановление"
-                ), 0.6
 
         # ── Race calendar override — macrocycle periodization ──
         target_race, tune_ups = _select_target_race(upcoming_races or [], today)
@@ -458,7 +345,7 @@ class WeeklyPlanBuilder:
         if tsb is not None and tsb < -25:
             return "recovery", f"TSB {tsb:+.0f} — накопленная усталость (порог -25)", 0.6
         if prev_tl > 0 and cur_tl > prev_tl * 1.3:
-            return "recovery", f"TL этой недели ({cur_tl:.0f}) на 30%+ выше прошлой ({prev_tl:.0f})", 0.6
+            return "recovery", f"TL прошлой недели ({cur_tl:.0f}) на 30%+ выше позапрошлой ({prev_tl:.0f}) — разгрузка", 0.6
 
         # ACWR check: 1.2-1.5 = warning (base week), >1.5 = forced recovery
         if atl is not None and ctl is not None and ctl > 0:
@@ -494,14 +381,14 @@ class WeeklyPlanBuilder:
             safe_factor = 1.0 + safe_increase / prev_km if prev_km > 0 else 1.08
             safe_factor = min(safe_factor, 1.10)  # never more than +10%
             return "build", (
-                f"Объём стабильный ({cur_km:.0f} км vs {prev_km:.0f} км), "
+                f"Объём стабильный (прошлая неделя {cur_km:.0f} км vs позапрошлая {prev_km:.0f} км), "
                 f"безопасный рост +{safe_increase:.0f} км (+{(safe_factor - 1) * 100:.0f}%)"
             ), safe_factor
 
         # Volume jump detection: current week >50% more than previous
         if prev_km > 0 and cur_km > prev_km * 1.5:
             return "base", (
-                f"Резкий скачок объёма: {cur_km:.0f} км vs {prev_km:.0f} км (+{((cur_km/prev_km)-1)*100:.0f}%) — "
+                f"Резкий скачок объёма: прошлая неделя {cur_km:.0f} км vs позапрошлая {prev_km:.0f} км (+{((cur_km/prev_km)-1)*100:.0f}%) — "
                 "не наращивать дальше, риск травмы"
             ), 0.9
 

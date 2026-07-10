@@ -668,7 +668,11 @@ def compute_recovery_status(metrics: dict) -> RecoveryStatus:
         label = "caution"
 
     rhr = (metrics.get("resting_hr") or {}).get("last")
-    rhr_baseline = (metrics.get("resting_hr") or {}).get("avg_7d") or (metrics.get("resting_hr") or {}).get("baseline")
+    # База RHR — медиана 7д (rhr_median_baseline), как и в overload_verdict;
+    # avg_7d/baseline — фолбэк для метрик без daily_trend_7d
+    rhr_baseline = (rhr_median_baseline(metrics.get("daily_trend_7d") or [])
+                    or (metrics.get("resting_hr") or {}).get("avg_7d")
+                    or (metrics.get("resting_hr") or {}).get("baseline"))
     if rhr is not None and rhr_baseline:
         delta = rhr - rhr_baseline
         if delta >= RHR_SPIKE_BPM:
@@ -972,4 +976,146 @@ def plan_line_for_date(plan_text: str | None, target: date) -> str | None:
         d = _infer_year(int(m.group(2)), int(m.group(3)), target)
         if d == target:
             return line.strip()
+    return None
+
+
+# ============================================================================
+# ЕДИНЫЙ ВЕРДИКТ ПЕРЕГРУЗА (hard-safety) — используют и утро (recovery_status),
+# и план (determine_week_type). До 10.07.2026 правила были продублированы
+# в plan_builder с другой базой RHR (среднее vs медиана) — два источника истины.
+# ============================================================================
+
+BB_CRIT_DAYS = 3              # BB<BB_LOW столько дней подряд → перегруз
+HRV_COMBO_BB = 60             # HRV UNBALANCED + bb_max ниже этого → перегруз
+VO2_DROPS_FOR_RECOVERY = 3    # падений VO2max подряд → перегруз
+ECONOMY_DROP_PCT = 5.0        # падение экономичности за 4 нед, %
+OVERLOAD_VOLUME_FACTOR = 0.6  # объём recovery-недели
+
+
+@dataclass
+class OverloadVerdict:
+    reason: str
+    volume_factor: float = OVERLOAD_VOLUME_FACTOR
+
+
+def rhr_median_baseline(daily_trend: list[dict]) -> float | None:
+    """База RHR = медиана 7 дней (устойчива к выбросам). Единственное определение."""
+    vals = sorted(d.get("rhr") for d in daily_trend if d.get("rhr"))
+    return vals[len(vals) // 2] if vals else None
+
+
+def overload_verdict(
+    metrics: dict,
+    activities_28d: list[dict] | None = None,
+    feelings: list[dict] | None = None,
+) -> OverloadVerdict | None:
+    """Правила принудительного восстановления. None = перегруза нет.
+
+    Порядок = приоритет. Все пороги — константы этого модуля.
+    """
+    daily_trend = metrics.get("daily_trend_7d", []) or []
+
+    # 1. RHR-спайк: выше медианы 7д на RHR_SPIKE_BPM
+    rhr_today = (metrics.get("resting_hr") or {}).get("resting_heart_rate") \
+        or (metrics.get("resting_hr") or {}).get("last")
+    rhr_base = rhr_median_baseline(daily_trend) if len(daily_trend) >= 3 else None
+    if rhr_today and rhr_base and rhr_today > rhr_base + RHR_SPIKE_BPM:
+        return OverloadVerdict(
+            f"ЧСС покоя {rhr_today} — на {rhr_today - rhr_base:.0f} уд/мин выше нормы "
+            f"({rhr_base:.0f}) — принудительное восстановление")
+
+    # 2. BB критически низкий несколько дней
+    low_bb_days = sum(1 for d in daily_trend if (d.get("bb_max") or 100) < BB_LOW)
+    if low_bb_days >= BB_CRIT_DAYS:
+        return OverloadVerdict(f"BB ниже {BB_LOW} в течение {low_bb_days} дней — принудительное восстановление")
+
+    # 3. HRV UNBALANCED + низкий BB
+    hrv_status = (metrics.get("hrv") or {}).get("status", "")
+    bb_today = (metrics.get("daily_summary") or {}).get("bb_max", 100)
+    if hrv_status == "UNBALANCED" and bb_today < HRV_COMBO_BB:
+        return OverloadVerdict("HRV UNBALANCED + BB низкий — признак перегрузки")
+
+    # 4. ЧД ночью: рост над средней 7д — ранний маркер болезни
+    sleep_trend = metrics.get("sleep_trend_7d") or []
+    rr_vals = [d.get("avg_rr") for d in sleep_trend if d.get("avg_rr")]
+    if len(rr_vals) >= 3:
+        rr_avg = sum(rr_vals) / len(rr_vals)
+        if rr_vals[-1] > rr_avg + RR_SPIKE_BPM:
+            return OverloadVerdict(
+                f"ЧД ночью {rr_vals[-1]:.1f} — на {rr_vals[-1] - rr_avg:.1f} вд/мин выше нормы "
+                f"({rr_avg:.1f}) — ранний маркер болезни/перегрузки")
+
+    # 5. Самочувствие ≤2 два дня подряд
+    if feelings and len(feelings) >= 2:
+        consecutive_low = 0
+        for f in reversed([f["score"] for f in feelings[-3:]]):
+            if f <= 2:
+                consecutive_low += 1
+            else:
+                break
+        if consecutive_low >= 2:
+            return OverloadVerdict(
+                f"Самочувствие ≤2 уже {consecutive_low} дня подряд — принудительное восстановление")
+
+    # 6. Недосып: средний сон <SLEEP_TOTAL_MIN_H за 3 ночи
+    sleep_hours: list[float] = []
+    for d in sleep_trend:
+        ts = d.get("total_sleep")
+        if not ts:
+            continue
+        try:
+            if isinstance(ts, str) and ":" in ts:
+                p = ts.split(":")
+                h = float(p[0]) + float(p[1]) / 60
+            else:
+                h = float(ts) / 3600
+            if h > 0:
+                sleep_hours.append(h)
+        except (ValueError, IndexError):
+            pass
+    if len(sleep_hours) >= 3:
+        avg_sl = sum(sleep_hours[-3:]) / 3
+        if avg_sl < SLEEP_TOTAL_MIN_H:
+            return OverloadVerdict(
+                f"Средний сон {avg_sl:.1f}ч за последние 3 ночи (<{SLEEP_TOTAL_MIN_H}ч) — "
+                "недовосстановление, принудительный отдых")
+
+    # 7. VO2max падает VO2_DROPS_FOR_RECOVERY замера подряд
+    vo2_hist = metrics.get("vo2max_history") or []
+    if len(vo2_hist) >= VO2_DROPS_FOR_RECOVERY + 1:
+        last = sorted(vo2_hist, key=lambda e: e["date"])[-(VO2_DROPS_FOR_RECOVERY + 1):]
+        drops = sum(1 for i in range(1, len(last))
+                    if (last[i].get("vo2_max") or 0) < (last[i - 1].get("vo2_max") or 0))
+        if drops >= VO2_DROPS_FOR_RECOVERY:
+            return OverloadVerdict(
+                f"VO2max падает {VO2_DROPS_FOR_RECOVERY}+ замера подряд "
+                f"({last[0].get('vo2_max', '?')} → {last[-1].get('vo2_max', '?')}) — "
+                "признак перетренированности, принудительное восстановление")
+
+    # 8. Экономичность бега (скорость/пульс на аэробных) падает за 4 недели
+    runs = [a for a in (activities_28d or []) if a.get("sport") == "running"]
+    econ: list[tuple[str, float]] = []
+    for a in runs:
+        spd, hr = a.get("avg_speed"), a.get("avg_hr")
+        if not spd or spd <= 0 or not hr or hr <= 0:
+            continue
+        zs = garmin_zone_secs(a)
+        if zs:
+            total = sum(zs)
+            if total > 0 and (zs[0] + zs[1] + zs[2]) / total < 0.75:
+                continue  # неаэробная — не сравниваем
+        elif (a.get("distance") or 0) > 12:
+            continue
+        econ.append((a.get("start_time", "")[:10], spd / hr * 1000))
+    if len(econ) >= 4:
+        econ.sort(key=lambda x: x[0])
+        half = len(econ) // 2
+        first = sum(e[1] for e in econ[:half]) / half
+        second = sum(e[1] for e in econ[half:]) / (len(econ) - half)
+        delta = (second - first) / first * 100 if first > 0 else 0
+        if delta < -ECONOMY_DROP_PCT:
+            return OverloadVerdict(
+                f"Экономичность бега снижается ({delta:+.1f}% за 4 нед.) — "
+                "признак накопленной усталости, принудительное восстановление")
+
     return None
