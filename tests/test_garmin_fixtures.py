@@ -161,5 +161,29 @@ class TestActivitySyncOnFixtures(FixtureSyncTestCase):
         self.assertGreater(len(self.client.requests), 3)
 
 
+class TestNullIntensityDay(FixtureSyncTestCase):
+    """Регресс 10.07: день без часов (null-минуты) ронял ВЕСЬ health-синк
+    на legacy-схемах с NOT NULL. Теперь — жёсткий дефолт и per-day изоляция."""
+
+    def test_null_minutes_written_as_zero_time(self):
+        base = json.loads((FIX / "daily_summary.json").read_text())
+        base["moderateIntensityMinutes"] = None
+        base["vigorousIntensityMinutes"] = None
+        base["intensityMinutesGoal"] = None
+        orig = self.client.connectapi
+
+        def patched(path, **kw):
+            if "usersummary-service" in path:
+                return base
+            return orig(path, **kw)
+
+        self.client.connectapi = patched
+        self.svc.run_health_sync(UID, "u@e.com", "pw")
+        rows = self._q("garmin.db",
+                       "SELECT moderate_activity_time, vigorous_activity_time, "
+                       "intensity_time_goal FROM daily_summary LIMIT 1")
+        self.assertEqual(rows[0], ("00:00:00.000000",) * 3)
+
+
 if __name__ == "__main__":
     unittest.main()

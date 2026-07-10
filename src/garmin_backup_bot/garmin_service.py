@@ -517,34 +517,43 @@ class GarminService:
             except Exception as exc:
                 logger.debug("Failed to get daily summary for %s: %s", day_iso, exc)
                 
-            with sqlite3.connect(garmin_db, timeout=5) as conn:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO daily_summary (
-                        day, hr_min, hr_max, rhr, stress_avg, step_goal, steps,
-                        moderate_activity_time, vigorous_activity_time, intensity_time_goal,
-                        floors_up, floors_down, floors_goal, distance,
-                        calories_goal, calories_total, calories_bmr, calories_active, calories_consumed,
-                        hydration_goal, hydration_intake, sweat_loss, spo2_avg, spo2_min,
-                        rr_waking_avg, rr_max, rr_min, bb_charged, bb_max, bb_min, description
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        day_iso, min_hr, max_hr, rhr, avg_stress, step_goal, steps,
-                        self._secs_to_time_str((moderate_min * 60) if moderate_min is not None else None),
-                        self._secs_to_time_str((vigorous_min * 60) if vigorous_min is not None else None),
-                        self._secs_to_time_str((intensity_goal * 60) if intensity_goal is not None else None),
-                        floors_up, floors_down, floors_goal, distance_km,
-                        calories_goal, calories_total, calories_bmr, calories_active, None,
-                        hydration_goal, hydration_intake, sweat_loss, spo2_avg, spo2_min,
-                        rr_waking_avg, rr_max, rr_min, bb_charged, bb_max, bb_min, description
-                    )
-                )
-                if rhr is not None:
+            # TIME-колонки с NOT NULL в legacy-схемах (эра GarminDB): день без часов
+            # даёт null-минуты → INSERT падал и убивал ВЕСЬ health-синк
+            # (инцидент 10.07: юзер три дня без свежих данных из-за одного
+            # старого дня с null). Жёсткий строковый дефолт как у hrz_*_time.
+            _zero_t = "00:00:00.000000"
+            try:
+                with sqlite3.connect(garmin_db, timeout=5) as conn:
                     conn.execute(
-                        "INSERT OR REPLACE INTO resting_hr (day, resting_heart_rate) VALUES (?, ?)",
-                        (day_iso, float(rhr))
+                        """
+                        INSERT OR REPLACE INTO daily_summary (
+                            day, hr_min, hr_max, rhr, stress_avg, step_goal, steps,
+                            moderate_activity_time, vigorous_activity_time, intensity_time_goal,
+                            floors_up, floors_down, floors_goal, distance,
+                            calories_goal, calories_total, calories_bmr, calories_active, calories_consumed,
+                            hydration_goal, hydration_intake, sweat_loss, spo2_avg, spo2_min,
+                            rr_waking_avg, rr_max, rr_min, bb_charged, bb_max, bb_min, description
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            day_iso, min_hr, max_hr, rhr, avg_stress, step_goal, steps,
+                            self._secs_to_time_str(moderate_min * 60) if moderate_min is not None else _zero_t,
+                            self._secs_to_time_str(vigorous_min * 60) if vigorous_min is not None else _zero_t,
+                            self._secs_to_time_str(intensity_goal * 60) if intensity_goal is not None else _zero_t,
+                            floors_up, floors_down, floors_goal, distance_km,
+                            calories_goal, calories_total, calories_bmr, calories_active, None,
+                            hydration_goal, hydration_intake, sweat_loss, spo2_avg, spo2_min,
+                            rr_waking_avg, rr_max, rr_min, bb_charged, bb_max, bb_min, description
+                        )
                     )
+                    if rhr is not None:
+                        conn.execute(
+                            "INSERT OR REPLACE INTO resting_hr (day, resting_heart_rate) VALUES (?, ?)",
+                            (day_iso, float(rhr))
+                        )
+            except sqlite3.Error as exc:
+                # один кривой день не должен убивать синк остальных
+                logger.warning("daily_summary insert failed for %s: %s", day_iso, exc)
 
         # 4. Fetch HRV
         try:
