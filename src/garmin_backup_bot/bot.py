@@ -35,17 +35,13 @@ BTN_WORKOUT = "🏃 Разбор"
 BTN_PLAN = "📅 План"
 BTN_SPORT = "🏅 Форма"
 BTN_GOAL = "🎯 Моя цель"
-BTN_MEMORY = "🧠 Заметки"
 BTN_STATUS = "📊 Статус"
 BTN_CALORIES = "🔥 Калории"
 BTN_RACE = "🏁 Старты"
 BTN_PROGRESS = "📈 Прогресс"
 BTN_WEEKLY = "📋 Итоги"
 BTN_RECORDS = "🏆 Рекорды"
-BTN_WEIGHT = "⚖️ Вес"
-BTN_LTHR = "💓 LTHR (порог)"
 BTN_TIMEZONE = "🕐 Часы"
-BTN_EXPERIENCE = "🏃 Стаж"
 BTN_PROFILE = "📋 Профиль"
 BTN_FOOD = "🍽 Еда"
 BTN_FOOD_REPORT = "📊 Питание"
@@ -136,8 +132,8 @@ _BAD_MEMORY_PATTERNS: list[tuple[str, str]] = [
     (r"(?i)\b(?:марафон|полумарафон|забег|старт|гонка)\b.{0,40}\d{1,2}[./\-]\d{1,2}",
      "гонка с датой — скажи мне «добавь забег <название> <дата>»"),
     (r"\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4}", "конкретная дата — скажи мне словами что это (гонка, цель и т.п.)"),
-    (r"(?i)\bLTHR\s*[:=]?\s*\d{2,3}\b", "LTHR — используй кнопку 💓 LTHR"),
-    (r"(?i)\bвес\s*[:=]?\s*\d{2,3}(?:[.,]\d)?\s*кг", "вес — используй кнопку ⚖ Вес"),
+    (r"(?i)\bLTHR\s*[:=]?\s*\d{2,3}\b", "LTHR — просто скажи «мой порог 172», сохраню в профиль"),
+    (r"(?i)\bвес\s*[:=]?\s*\d{2,3}(?:[.,]\d)?\s*кг", "вес — просто скажи «мой вес 72.5», сохраню в профиль"),
     (r"(?i)\bчасовой\s+пояс\b", "часовой пояс — используй кнопку 🕐 Часы"),
 ]
 
@@ -620,9 +616,6 @@ class GarminBot:
             MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_GOAL}$"), self.handle_goal_btn)
         )
         self._app.add_handler(
-            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_MEMORY}$"), self.show_memory)
-        )
-        self._app.add_handler(
             MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_STATUS}$"), self.status)
         )
         self._app.add_handler(
@@ -641,16 +634,7 @@ class GarminBot:
             MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_RECORDS}$"), self.handle_records)
         )
         self._app.add_handler(
-            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_WEIGHT)}$"), self.handle_weight_btn)
-        )
-        self._app.add_handler(
-            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_LTHR)}$"), self.handle_lthr_btn)
-        )
-        self._app.add_handler(
             MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_TIMEZONE)}$"), self.handle_timezone_btn)
-        )
-        self._app.add_handler(
-            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_EXPERIENCE)}$"), self.handle_experience_btn)
         )
         self._app.add_handler(
             MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_PROFILE)}$"), self.handle_profile_btn)
@@ -2520,33 +2504,6 @@ class GarminBot:
             "\n".join(lines), reply_markup=MAIN_KEYBOARD, parse_mode="HTML",
         )
 
-    async def handle_weight_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show current weight and prompt for manual entry."""
-        user_id = update.effective_user.id
-        overrides = self._storage.get_profile_override(user_id)
-        current = overrides.get("weight_kg")
-        current_str = f"Текущий: {current} кг\n" if current else ""
-        await update.message.reply_text(
-            f"⚖️ Введи вес в кг (например: 72.5)\n{current_str}",
-            reply_markup=MAIN_KEYBOARD,
-        )
-        context.user_data["awaiting"] = "weight"
-
-    async def handle_lthr_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Show current LTHR and prompt for manual entry."""
-        user_id = update.effective_user.id
-        overrides = self._storage.get_profile_override(user_id)
-        current = overrides.get("lthr")
-        current_str = f"Текущий (вручную): {current:.0f} уд/мин\n" if current else ""
-        await update.message.reply_text(
-            f"💓 Введи LTHR — лактатный порог пульса (например: 172)\n"
-            f"{current_str}"
-            f"Если введён вручную — данные Garmin игнорируются.\n"
-            f"Как измерить: 30 мин бег в полную силу, средний пульс за последние 20 мин = LTHR.",
-            reply_markup=MAIN_KEYBOARD,
-        )
-        context.user_data["awaiting"] = "lthr"
-
     async def handle_timezone_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show current timezone and prompt for change."""
         user_id = update.effective_user.id
@@ -2564,19 +2521,6 @@ class GarminBot:
             reply_markup=MAIN_KEYBOARD,
         )
         context.user_data["awaiting"] = "timezone"
-
-    async def handle_experience_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Prompt for running experience in years."""
-        user_id = update.effective_user.id
-        overrides = self._storage.get_profile_override(user_id)
-        current = overrides.get("running_experience_years")
-        current_str = f"Текущий: {current:.0f} лет\n" if current else ""
-        await update.message.reply_text(
-            f"🏃 Сколько лет ты бегаешь регулярно? (например: 2)\n{current_str}"
-            f"Это влияет на безопасный темп роста объёмов.",
-            reply_markup=MAIN_KEYBOARD,
-        )
-        context.user_data["awaiting"] = "experience"
 
     async def handle_profile_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Show current profile and start questionnaire for missing fields."""
@@ -2792,7 +2736,7 @@ class GarminBot:
         if not question:
             return
 
-        # Handle awaiting input for weight/LTHR/timezone/experience
+        # Handle awaiting input for timezone (вес/LTHR/стаж — словами через set_* tools)
         awaiting = context.user_data.pop("awaiting", None)
         if awaiting == "timezone":
             tz_name = question.strip()
@@ -2809,48 +2753,6 @@ class GarminBot:
                     reply_markup=MAIN_KEYBOARD,
                 )
             return
-        if awaiting in ("weight", "lthr"):
-            try:
-                value = float(question.replace(",", "."))
-                if awaiting == "weight":
-                    if not (30 < value < 250):
-                        raise ValueError
-                    self._storage.save_profile_override(user_id, weight_kg=value)
-                    await update.message.reply_text(
-                        f"✅ Вес сохранён: {value} кг", reply_markup=MAIN_KEYBOARD
-                    )
-                else:
-                    if not (100 < value < 220):
-                        raise ValueError
-                    self._storage.save_profile_override(user_id, lthr=value)
-                    await update.message.reply_text(
-                        f"✅ LTHR сохранён: {value:.0f} уд/мин\n"
-                        f"Данные Garmin по LTHR теперь игнорируются.",
-                        reply_markup=MAIN_KEYBOARD,
-                    )
-            except (ValueError, TypeError):
-                await update.message.reply_text(
-                    "Не понял число. Введи ещё раз (например: 72.5 или 172)",
-                    reply_markup=MAIN_KEYBOARD,
-                )
-            return
-        if awaiting == "experience":
-            try:
-                value = float(question.replace(",", "."))
-                if not (0 <= value <= 50):
-                    raise ValueError
-                self._storage.save_profile_override(user_id, running_experience_years=value)
-                await update.message.reply_text(
-                    f"✅ Беговой стаж сохранён: {value:.0f} лет",
-                    reply_markup=MAIN_KEYBOARD,
-                )
-            except (ValueError, TypeError):
-                await update.message.reply_text(
-                    "Введи число от 0 до 50 (например: 2)",
-                    reply_markup=MAIN_KEYBOARD,
-                )
-            return
-
         # Food mode — text as food description
         if awaiting == "food" and self._nutrition:
             date_iso, food_text = self._resolve_food_date(
@@ -3187,7 +3089,7 @@ class GarminBot:
                 return "[ошибка: пустой текст]"
             reason = _classify_bad_memory(text)
             if reason:
-                return f"[отказано: {reason}. Если это факт за конкретную дату — вызови confirm_fact. Цели — через /goal, кнопки веса/LTHR/часов — структурные.]"
+                return f"[отказано: {reason}. Если это факт за конкретную дату — вызови confirm_fact. Цель — set_training_goal, вес/LTHR/стаж/часы — set_weight/set_lthr/set_experience/set_timezone.]"
             exp_iso = _parse_expiry(expires_at) if expires_at else None
             new_id = self._storage.add_memory_item(user_id, text, expires_at=exp_iso)
             if new_id is None:

@@ -11,6 +11,27 @@ SRC="${PROJECT_DIR}/data/app.db"
 BACKUP_DIR="${PROJECT_DIR}/data/backups"
 KEEP_DAYS="${KEEP_DAYS:-14}"
 
+# ── TG-алерт админу при сбое ─────────────────────────────────────────────────
+# Токен/ID берём из .env бота; сбой самого алерта бэкап не валит (|| true).
+notify_admin() {
+    local text="$1" token admin_ids
+    token="$(grep -m1 '^TELEGRAM_BOT_TOKEN=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2- || true)"
+    admin_ids="$(grep -m1 '^ADMIN_USER_IDS=' "${PROJECT_DIR}/.env" 2>/dev/null | cut -d= -f2- || true)"
+    [[ -n "${token}" && -n "${admin_ids}" ]] || return 0
+    local id
+    for id in ${admin_ids//,/ }; do
+        curl -sS -m 15 -o /dev/null "https://api.telegram.org/bot${token}/sendMessage" \
+            --data-urlencode "chat_id=${id}" \
+            --data-urlencode "text=${text}" || true
+    done
+}
+
+on_error() {
+    local line="$1"
+    notify_admin "🔴 Бэкап app.db УПАЛ (строка ${line}, $(date +%F' '%H:%M)). Проверь: journalctl --user -u garmin-backup-db.service"
+}
+trap 'on_error ${LINENO}' ERR
+
 mkdir -p "${BACKUP_DIR}"
 
 if [[ ! -f "${SRC}" ]]; then
@@ -88,6 +109,7 @@ if command -v rclone >/dev/null && rclone listremotes 2>/dev/null | grep -q '^gd
         echo "offsite: синхронизировано в gdrive:garmin-backups"
     else
         echo "offsite: ОШИБКА rclone sync — локальный бэкап цел, проверь токен" >&2
+        notify_admin "⚠️ Бэкап: offsite rclone sync в gdrive:garmin-backups упал ($(date +%F)). Локальный бэкап цел, проверь токен rclone."
     fi
 else
     echo "offsite: rclone/gdrive не настроен, пропускаю" >&2
