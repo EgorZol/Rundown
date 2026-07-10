@@ -54,6 +54,8 @@ DAY_ALIASES = {
 class ProfileMixin:
 
     async def handle_timezone_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "any"):
+            return
         """Show current timezone and prompt for change."""
         user_id = update.effective_user.id
         overrides = self._storage.get_profile_override(user_id)
@@ -72,6 +74,8 @@ class ProfileMixin:
         context.user_data["awaiting"] = "timezone"
 
     async def handle_profile_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Show current profile and start questionnaire for missing fields."""
         self._track_event(update, "profile")
         user_id = update.effective_user.id
@@ -123,6 +127,8 @@ class ProfileMixin:
             await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
 
     async def handle_profile_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Reset profile questionnaire fields so the user can refill them."""
         user_id = update.effective_user.id
         with self._storage._connect() as conn:

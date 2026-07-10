@@ -287,6 +287,11 @@ class QAMixin:
                     )
             return
 
+        # Пейволл свободного QA — тариф «Тренер». Стоит ПОСЛЕ awaiting-веток,
+        # чтобы юзер «Калорий» мог дописать еду/анкету текстом.
+        if not await self._gate(update, "coach"):
+            return
+
         creds = self._storage.get_credentials(user_id)
         if not creds:
             await update.message.reply_text(

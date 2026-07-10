@@ -547,3 +547,35 @@ class TestDataGaps(unittest.TestCase):
         self.assertIsNotNone(coach.pick_nudge(
             gaps, history, date(2026, 7, 10),
             repeat_days=coach.NUDGE_REPEAT_DAYS_NEWBIE))
+
+
+class TestSubscriptionAccess(unittest.TestCase):
+    TODAY = date(2026, 7, 10)
+
+    def test_no_subscription(self):
+        self.assertEqual(coach.access_level(None, self.TODAY), "none")
+
+    def test_free_forever_full_access_without_date(self):
+        sub = {"plan": "free_forever", "paid_until": None}
+        self.assertEqual(coach.access_level(sub, self.TODAY), "coach")
+        self.assertTrue(coach.has_access(sub, self.TODAY, "coach"))
+
+    def test_trial_active_and_expired(self):
+        active = {"plan": "trial", "paid_until": "2026-07-12"}
+        expired = {"plan": "trial", "paid_until": "2026-07-09"}
+        self.assertEqual(coach.access_level(active, self.TODAY), "coach")
+        self.assertEqual(coach.access_level(expired, self.TODAY), "none")
+
+    def test_paid_until_inclusive(self):
+        sub = {"plan": "coach", "paid_until": "2026-07-10"}
+        self.assertEqual(coach.access_level(sub, self.TODAY), "coach")
+
+    def test_calories_plan_scoping(self):
+        sub = {"plan": "calories", "paid_until": "2026-08-01"}
+        self.assertEqual(coach.access_level(sub, self.TODAY), "calories")
+        self.assertFalse(coach.has_access(sub, self.TODAY, "coach"))
+        self.assertTrue(coach.has_access(sub, self.TODAY, "any"))
+
+    def test_garbage_paid_until(self):
+        sub = {"plan": "coach", "paid_until": "когда-нибудь"}
+        self.assertEqual(coach.access_level(sub, self.TODAY), "none")

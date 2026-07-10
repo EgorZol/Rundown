@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 class FoodMixin:
 
     async def handle_calories(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "any"):
+            return
         self._track_event(update, "calories")
         user_id = update.effective_user.id
 
@@ -56,6 +58,8 @@ class FoodMixin:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
     async def handle_food_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "any"):
+            return
         """Activate food logging mode."""
         self._track_event(update, "food_mode")
         if not self._nutrition:
@@ -122,6 +126,8 @@ class FoodMixin:
         return True
 
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "any"):
+            return
         """Handle photo messages — food recognition when in food mode."""
         import base64
         import io
@@ -186,6 +192,8 @@ class FoodMixin:
         await update.message.reply_text(text, reply_markup=FOOD_CONFIRM_KB)
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "any"):
+            return
         """Handle voice messages — transcribe, then route to food or question."""
         import io
 
@@ -355,6 +363,8 @@ class FoodMixin:
             context.user_data.pop("food_date", None)
 
     async def handle_food_report(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "any"):
+            return
         """Show daily nutrition report for today."""
         self._track_event(update, "food_report")
         user_id = update.effective_user.id

@@ -1201,3 +1201,47 @@ def pick_nudge(
         if (today - last).days >= wait:
             return gap
     return None
+
+
+# ── Подписки: чистая логика доступа (тарифы и цены — bot_payments.py) ────────
+
+PLAN_COACH = "coach"            # всё: отчёты, план, QA, еда
+PLAN_CALORIES = "calories"      # только домен еды
+PLAN_TRIAL = "trial"            # 7 дней полного «Тренера» новым юзерам
+PLAN_FREE_FOREVER = "free_forever"  # грандфазеринг ранних юзеров
+TRIAL_DAYS = 7
+
+
+def access_level(sub: dict | None, today: date) -> str:
+    """Уровень доступа юзера: 'coach' | 'calories' | 'none'.
+
+    sub = {'plan': ..., 'paid_until': ISO|None} или None (юзер без записи —
+    триал ему заводит бот при первом обращении).
+    """
+    if not sub:
+        return "none"
+    plan = sub.get("plan")
+    if plan == PLAN_FREE_FOREVER:
+        return "coach"
+    paid_until = sub.get("paid_until")
+    if not paid_until:
+        return "none"
+    try:
+        active = date.fromisoformat(str(paid_until)[:10]) >= today
+    except ValueError:
+        return "none"
+    if not active:
+        return "none"
+    if plan in (PLAN_COACH, PLAN_TRIAL):
+        return "coach"
+    if plan == PLAN_CALORIES:
+        return "calories"
+    return "none"
+
+
+def has_access(sub: dict | None, today: date, need: str = "coach") -> bool:
+    """need: 'coach' (отчёты/QA) или 'any' (достаточно тарифа «Калории»)."""
+    level = access_level(sub, today)
+    if need == "coach":
+        return level == "coach"
+    return level in ("coach", "calories")

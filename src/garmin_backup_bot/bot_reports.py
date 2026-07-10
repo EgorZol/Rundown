@@ -149,6 +149,8 @@ class ReportsMixin:
         return None
 
     async def handle_morning(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         self._track_event(update, "morning")
         user_id = update.effective_user.id
 
@@ -329,6 +331,8 @@ class ReportsMixin:
         self._storage.add_message(user_id, "assistant", morning_full, source="morning")
 
     async def handle_workout(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         self._track_event(update, "workout")
         user_id = update.effective_user.id
 
@@ -470,6 +474,8 @@ class ReportsMixin:
         self._storage.add_message(user_id, "assistant", analysis, source="workout")
 
     async def handle_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         self._track_event(update, "plan")
         user_id = update.effective_user.id
 
@@ -621,6 +627,8 @@ class ReportsMixin:
             return None
 
     async def handle_sport_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         self._track_event(update, "sport_status")
         user_id = update.effective_user.id
 
@@ -680,6 +688,8 @@ class ReportsMixin:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
     async def handle_progress(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Show progress report with race predictions, weight trend, PRs."""
         self._track_event(update, "progress")
         user_id = update.effective_user.id
@@ -754,6 +764,8 @@ class ReportsMixin:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
     async def handle_weekly_summary(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Show weekly training summary with plan comparison."""
         self._track_event(update, "weekly_summary")
         user_id = update.effective_user.id
@@ -884,6 +896,8 @@ class ReportsMixin:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
     async def handle_records(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Show personal records at standard distances."""
         self._track_event(update, "records")
         user_id = update.effective_user.id

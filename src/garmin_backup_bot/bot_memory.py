@@ -104,6 +104,8 @@ def _classify_bad_memory(note: str) -> str | None:
 class MemoryMixin:
 
     async def remember(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Save persistent notes that Claude always sees.
 
         Usage:
@@ -155,6 +157,8 @@ class MemoryMixin:
         await self._show_memory_list(update, user_id, header=f"Запомнил (#{new_id}){suffix}.")
 
     async def show_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Show current persistent memory as a numbered list."""
         user_id = update.effective_user.id
         await self._show_memory_list(update, user_id)
@@ -186,6 +190,8 @@ class MemoryMixin:
         await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
 
     async def forget_memory(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Удалить заметку. Power-user команда; обычный способ — сказать словами."""
         user_id = update.effective_user.id
         args = context.args or []

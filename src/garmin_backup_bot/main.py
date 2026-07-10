@@ -65,6 +65,7 @@ def main() -> None:
         garmin_db_timezone=settings.garmin_db_timezone,
         nutrition=nutrition,
         transcriber=transcriber,
+        payment_provider_token=settings.payment_provider_token,
     )
     app.run_polling()
 

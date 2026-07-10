@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 class RacesMixin:
 
     async def handle_goal(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Set or view training goal: /goal [description]"""
         user_id = update.effective_user.id
         args = context.args or []
@@ -94,6 +96,8 @@ class RacesMixin:
         return added
 
     async def handle_goal_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Button handler: show current goal and how to change it conversationally."""
         user_id = update.effective_user.id
         current = self._storage.get_goal(user_id)
@@ -112,6 +116,8 @@ class RacesMixin:
             )
 
     async def handle_feeling(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Save subjective well-being score: /feeling 4 [optional note]"""
         user_id = update.effective_user.id
         args = (context.args or [])
@@ -213,12 +219,16 @@ class RacesMixin:
         return "\n".join(lines)
 
     async def handle_race_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         self._track_event(update, "race_btn")
         user_id = update.effective_user.id
         text = self._format_race_calendar(user_id)
         await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
 
     async def handle_race_cmd(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        if not await self._gate(update, "coach"):
+            return
         """Add or delete a race: /race 2026-05-15 Полумарафон [21.1] [1:45:00]
         Delete: /race delete #3"""
         self._track_event(update, "race_cmd")

@@ -330,6 +330,70 @@ class Storage:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_nudge_user_key ON nudge_log(user_id, gap_key)"
             )
+            # Подписки: одна строка на юзера. Планы/доступ — coach.access_level.
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS subscriptions (
+                    user_id INTEGER PRIMARY KEY,
+                    plan TEXT NOT NULL,
+                    paid_until TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            # Журнал успешных платежей (Telegram Payments / ЮKassa)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS payments (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    plan TEXT NOT NULL,
+                    amount INTEGER NOT NULL,
+                    currency TEXT NOT NULL,
+                    telegram_charge_id TEXT,
+                    provider_charge_id TEXT,
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+
+    # ---------- подписки и платежи ----------
+
+    def get_subscription(self, user_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT plan, paid_until FROM subscriptions WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        return {"plan": row[0], "paid_until": row[1]} if row else None
+
+    def upsert_subscription(self, user_id: int, plan: str, paid_until: str | None) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO subscriptions (user_id, plan, paid_until, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    plan = excluded.plan,
+                    paid_until = excluded.paid_until,
+                    updated_at = excluded.updated_at
+                """,
+                (user_id, plan, paid_until, now_iso, now_iso),
+            )
+
+    def record_payment(
+        self, user_id: int, plan: str, amount: int, currency: str,
+        telegram_charge_id: str | None, provider_charge_id: str | None,
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO payments (user_id, plan, amount, currency, "
+                "telegram_charge_id, provider_charge_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user_id, plan, amount, currency, telegram_charge_id, provider_charge_id, now_iso),
+            )
 
     def log_nudge(self, user_id: int, gap_key: str) -> None:
         """Зафиксировать показ подсказки о пробеле в данных."""

@@ -26,7 +26,7 @@ from telegram import (
     ReplyKeyboardRemove,
     Update,
 )
-from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, TypeHandler, filters
+from telegram.ext import Application, CallbackContext, CallbackQueryHandler, CommandHandler, ContextTypes, MessageHandler, PreCheckoutQueryHandler, TypeHandler, filters
 
 from .analyst import HealthAnalyst
 from .crypto import SecretBox
@@ -59,6 +59,7 @@ from .bot_common import (  # noqa: F401  (реэкспорт для тестов
 from .bot_food import FoodMixin
 from .bot_jobs import JobsMixin
 from .bot_memory import MemoryMixin
+from .bot_payments import PaymentsMixin
 from .bot_profile import ProfileMixin
 from .bot_qa import QAMixin
 from .bot_races import RacesMixin
@@ -67,7 +68,7 @@ from .bot_reports import ReportsMixin
 logger = logging.getLogger(__name__)
 
 
-class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, QAMixin, JobsMixin):
+class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, QAMixin, JobsMixin, PaymentsMixin):
     _MAX_MSG_LEN = 4000
 
     def __init__(
@@ -85,6 +86,7 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
         garmin_db_timezone: str | None = None,
         nutrition: NutritionAnalyzer | None = None,
         transcriber: Transcriber | None = None,
+        payment_provider_token: str | None = None,
     ) -> None:
         self._app = app
         self._storage = storage
@@ -94,6 +96,7 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
         self._plan_builder = plan_builder
         self._nutrition = nutrition
         self._transcriber = transcriber
+        self._payment_provider_token = payment_provider_token
         self._webapp_base_url = (webapp_base_url or "").rstrip("/")
         self._webapp_token_ttl_seconds = webapp_token_ttl_seconds
         self._admin_user_ids = admin_user_ids
@@ -226,6 +229,13 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
         self._app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.VOICE, self.handle_voice))
         self._app.add_handler(CallbackQueryHandler(self.handle_food_callback, pattern="^food:"))
         self._app.add_handler(CallbackQueryHandler(self.handle_fooddb_callback, pattern="^fdb:"))
+        # Платежи (Telegram Payments / ЮKassa)
+        self._app.add_handler(CallbackQueryHandler(self.handle_buy_callback, pattern="^buy:"))
+        self._app.add_handler(PreCheckoutQueryHandler(self.handle_pre_checkout))
+        self._app.add_handler(
+            MessageHandler(filters.SUCCESSFUL_PAYMENT, self.handle_successful_payment)
+        )
+        self._app.add_handler(CommandHandler("paysupport", self.paysupport))
         # General text — must be last
         self._app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND, self.handle_question))
 
@@ -507,6 +517,7 @@ def build_application(
     garmin_db_timezone: str | None = None,
     nutrition: NutritionAnalyzer | None = None,
     transcriber: Transcriber | None = None,
+    payment_provider_token: str | None = None,
 ) -> Application:
     app = (
         Application.builder()
@@ -529,5 +540,6 @@ def build_application(
         garmin_db_timezone=garmin_db_timezone,
         nutrition=nutrition,
         transcriber=transcriber,
+        payment_provider_token=payment_provider_token,
     )
     return app

@@ -23,6 +23,7 @@ class Settings:
     user_age: int
     weekly_km_target: float
     openai_api_key: str | None
+    payment_provider_token: str | None  # BotFather → Payments → ЮKassa; пусто = оплата «скоро»
 
 
 def load_settings() -> Settings:
@@ -73,6 +74,7 @@ def load_settings() -> Settings:
     user_age = int(os.getenv("USER_AGE", "35").strip())
     weekly_km_target = float(os.getenv("WEEKLY_KM_TARGET", "0").strip())
     openai_api_key = os.getenv("OPENAI_API_KEY", "").strip() or None
+    payment_provider_token = os.getenv("PAYMENT_PROVIDER_TOKEN", "").strip() or None
 
     return Settings(
         telegram_bot_token=token,
@@ -91,4 +93,5 @@ def load_settings() -> Settings:
         user_age=user_age,
         weekly_km_target=weekly_km_target,
         openai_api_key=openai_api_key,
+        payment_provider_token=payment_provider_token,
     )
