@@ -117,7 +117,7 @@ class HealthAnalyst(FormattingMixin):
                     "Важная информация о пользователе (запомни навсегда):\n"
                     f"{user_memory}\n\n{system_prompt}"
                 )
-            system_block = [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral"}}]
+            system_block = [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
 
         last_exc: Exception | None = None
         for idx, model in enumerate(self._models):
@@ -1249,7 +1249,7 @@ class HealthAnalyst(FormattingMixin):
             + self._user_context_block(fitness_profile, garmin_zone_boundaries=(metrics or {}).get("garmin_zones"))
         )
         system: list[dict] = [
-            {"type": "text", "text": stable_part, "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": stable_part, "cache_control": {"type": "ephemeral", "ttl": "1h"}},
             {"type": "text", "text": dynamic_part},
         ]
         try:
@@ -1315,7 +1315,7 @@ class HealthAnalyst(FormattingMixin):
                     "Важная информация о пользователе:\n"
                     f"{user_memory}\n\n{system}"
                 )
-            system_block = [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral"}}]
+            system_block = [{"type": "text", "text": full_system, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
 
         base_messages: list[dict] = list(history or [])
         base_messages.append({"role": "user", "content": question})

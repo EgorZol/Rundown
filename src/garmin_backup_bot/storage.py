@@ -559,6 +559,8 @@ class Storage:
         limit: int = 20,
         sources: list[str] | tuple[str, ...] | str | None = None,
         max_chars_per_msg: int = 1200,
+        recent_full: int | None = None,
+        older_cap: int = 250,
     ) -> list[dict]:
         """Return the last `limit` messages as [{'role': ..., 'content': ...}].
 
@@ -601,10 +603,17 @@ class Storage:
                     (user_id, *sources, limit),
                 ).fetchall()
         out: list[dict] = []
-        for role, content in rows:
-            if max_chars_per_msg and len(content) > max_chars_per_msg:
+        for i, (role, content) in enumerate(rows):
+            # Гибридное окно: свежие recent_full сообщений — под обычным капом,
+            # более старые — только «заголовок» (older_cap символов). Нить
+            # разговора сохраняется, а старые простыни отчётов не раздувают
+            # каждый LLM-вызов. rows отсортированы старые → новые.
+            cap = max_chars_per_msg
+            if recent_full is not None and i < len(rows) - recent_full:
+                cap = older_cap
+            if cap and len(content) > cap:
                 # Берём начало (это обычно суть/вердикт), хвост обрезаем.
-                content = content[:max_chars_per_msg].rstrip() + " […сокращено]"
+                content = content[:cap].rstrip() + " […сокращено]"
             out.append({"role": role, "content": content})
         return out
 

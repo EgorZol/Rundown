@@ -174,3 +174,30 @@ class TestRaces(StorageTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHybridHistory(unittest.TestCase):
+    """get_history(recent_full=N): свежие — полные, старшие — заголовки."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.st = Storage(Path(self._tmp.name) / "app.db")
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_older_messages_capped(self):
+        for i in range(6):
+            self.st.add_message(1, "assistant", f"msg{i} " + "x" * 500, source="qa")
+        h = self.st.get_history(1, limit=6, recent_full=2, older_cap=100)
+        self.assertEqual(len(h), 6)
+        for m in h[:4]:   # старшие 4 — обрезаны
+            self.assertLess(len(m["content"]), 130)
+            self.assertIn("[…сокращено]", m["content"])
+        for m in h[4:]:   # свежие 2 — полные
+            self.assertGreater(len(m["content"]), 400)
+
+    def test_default_no_hybrid(self):
+        self.st.add_message(1, "assistant", "y" * 500, source="qa")
+        h = self.st.get_history(1, limit=5)
+        self.assertGreater(len(h[0]["content"]), 400)

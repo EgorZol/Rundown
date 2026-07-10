@@ -321,6 +321,7 @@ class QAMixin:
         history = self._storage.get_history(
             user_id, limit=20,
             sources=("qa", "plan_tweak", "morning", "workout"),
+            recent_full=10,  # старшие 10 сообщений — только заголовки (экономия ~1k ток/вызов)
         )
         user_memory = self._storage.get_user_memory(user_id)
         training_goal = self._storage.get_goal(user_id)
