@@ -606,71 +606,71 @@ class GarminBot:
         self._app.add_handler(CommandHandler("goal", self.handle_goal))
         self._app.add_handler(CommandHandler("race", self.handle_race_cmd))
         self._app.add_handler(CommandHandler("profile_reset", self.handle_profile_reset))
-        self._app.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.handle_webapp_data))
+        self._app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.StatusUpdate.WEB_APP_DATA, self.handle_webapp_data))
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_MORNING}$"), self.handle_morning)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_MORNING}$"), self.handle_morning)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_WORKOUT}$"), self.handle_workout)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_WORKOUT}$"), self.handle_workout)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_PLAN}$"), self.handle_plan)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_PLAN}$"), self.handle_plan)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_SPORT}$"), self.handle_sport_status)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_SPORT}$"), self.handle_sport_status)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_GOAL}$"), self.handle_goal_btn)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_GOAL}$"), self.handle_goal_btn)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_MEMORY}$"), self.show_memory)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_MEMORY}$"), self.show_memory)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_STATUS}$"), self.status)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_STATUS}$"), self.status)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_CALORIES}$"), self.handle_calories)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_CALORIES}$"), self.handle_calories)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_RACE}$"), self.handle_race_btn)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_RACE}$"), self.handle_race_btn)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_PROGRESS}$"), self.handle_progress)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_PROGRESS}$"), self.handle_progress)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_WEEKLY}$"), self.handle_weekly_summary)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_WEEKLY}$"), self.handle_weekly_summary)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{BTN_RECORDS}$"), self.handle_records)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{BTN_RECORDS}$"), self.handle_records)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{re.escape(BTN_WEIGHT)}$"), self.handle_weight_btn)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_WEIGHT)}$"), self.handle_weight_btn)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{re.escape(BTN_LTHR)}$"), self.handle_lthr_btn)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_LTHR)}$"), self.handle_lthr_btn)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{re.escape(BTN_TIMEZONE)}$"), self.handle_timezone_btn)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_TIMEZONE)}$"), self.handle_timezone_btn)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{re.escape(BTN_EXPERIENCE)}$"), self.handle_experience_btn)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_EXPERIENCE)}$"), self.handle_experience_btn)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{re.escape(BTN_PROFILE)}$"), self.handle_profile_btn)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_PROFILE)}$"), self.handle_profile_btn)
         )
         # Food / nutrition handlers
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{re.escape(BTN_FOOD)}$"), self.handle_food_btn)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_FOOD)}$"), self.handle_food_btn)
         )
         self._app.add_handler(
-            MessageHandler(filters.Regex(f"^{re.escape(BTN_FOOD_REPORT)}$"), self.handle_food_report)
+            MessageHandler(filters.UpdateType.MESSAGE & filters.Regex(f"^{re.escape(BTN_FOOD_REPORT)}$"), self.handle_food_report)
         )
-        self._app.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
-        self._app.add_handler(MessageHandler(filters.VOICE, self.handle_voice))
+        self._app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.PHOTO, self.handle_photo))
+        self._app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.VOICE, self.handle_voice))
         self._app.add_handler(CallbackQueryHandler(self.handle_food_callback, pattern="^food:"))
         self._app.add_handler(CallbackQueryHandler(self.handle_fooddb_callback, pattern="^fdb:"))
         # General text — must be last
-        self._app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_question))
+        self._app.add_handler(MessageHandler(filters.UpdateType.MESSAGE & filters.TEXT & ~filters.COMMAND, self.handle_question))
 
     # ── Commands ──────────────────────────────────────────────────────────────
 
