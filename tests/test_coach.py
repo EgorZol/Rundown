@@ -538,3 +538,12 @@ class TestDataGaps(unittest.TestCase):
         history = {"lthr": (1, "2026-07-09T05:00:00+00:00"),
                    "weight": (1, "2026-07-09T05:00:00+00:00")}
         self.assertIsNone(coach.pick_nudge(gaps, history, date(2026, 7, 10)))
+
+    def test_newbie_repeat_days(self):
+        gaps = [coach.DataGap("goal", "…")]
+        history = {"goal": (1, "2026-07-08T05:00:00+00:00")}  # показано 2 дня назад
+        # обычный ритм (7 дн) — рано; ритм новичка (2 дн) — уже можно
+        self.assertIsNone(coach.pick_nudge(gaps, history, date(2026, 7, 10)))
+        self.assertIsNotNone(coach.pick_nudge(
+            gaps, history, date(2026, 7, 10),
+            repeat_days=coach.NUDGE_REPEAT_DAYS_NEWBIE))

@@ -320,13 +320,89 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
         self._storage.upsert_credentials(
             user_id=token_user_id, username=username, password_encrypted=encrypted
         )
-        await message.reply_text(
-            "✅ Garmin подключён!\n\n"
-            "👉 Нажми «Утро» — пойдёт первая синхронизация данных "
-            "(2–3 минуты, только в первый раз дольше). После неё бот "
-            "разберёт твой сон, восстановление и нагрузку.",
-            reply_markup=MAIN_KEYBOARD,
+        await message.reply_text("✅ Garmin подключён!", reply_markup=MAIN_KEYBOARD)
+        # Первичный синк запускаем сразу и сами — юзеру не нужно догадываться
+        # нажать «Утро». Кнопка «Утро» остаётся страховкой: если этот таск
+        # оборвётся (рестарт бота и т.п.), утренний синк дотянет историю.
+        context.application.create_task(self._initial_sync_and_onboard(update, context))
+
+    async def _initial_sync_and_onboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Фоновая загрузка истории после подключения Garmin + финал онбординга.
+
+        Показывается один раз в жизни юзера (ключ «onboarding» в nudge_log);
+        при переподключении креденшлов с уже загруженной историей — короткий ответ.
+        """
+        user_id = update.effective_user.id
+        message = update.effective_message
+        creds = self._storage.get_credentials(user_id)
+        if not creds:
+            return
+        if not self._service.is_initial_sync_pending(user_id):
+            await message.reply_text(
+                "История уже загружена — жми 🌅 Утро за свежим брифингом.",
+                reply_markup=MAIN_KEYBOARD,
+            )
+            return
+
+        status_msg = await message.reply_text("⏳ Загружаю твою историю из Garmin — обычно 2–5 минут...")
+        stop = asyncio.Event()
+        spinner = asyncio.create_task(self._animate(status_msg, stop, [
+            "Загружаю сон, пульс и восстановление",
+            "Загружаю тренировки за год",
+            "Считаю круги и сплиты",
+            "Строю аналитику",
+        ]))
+        try:
+            lock = self._get_sync_lock(user_id)
+            async with lock:
+                password = self._box.decrypt(creds.password_encrypted)
+                async with self._sync_sem_for(user_id):
+                    await asyncio.to_thread(
+                        self._service.run_health_sync,
+                        user_id=user_id, username=creds.username, password=password,
+                    )
+                async with self._sync_sem_for(user_id):
+                    await asyncio.to_thread(
+                        self._service.run_activity_sync,
+                        user_id=user_id, username=creds.username, password=password,
+                    )
+        except Exception as exc:
+            stop.set()
+            with contextlib.suppress(Exception):
+                await spinner
+            logger.exception("initial sync failed for user %s", user_id)
+            if _is_garmin_auth_error(exc):
+                await status_msg.edit_text(
+                    "❌ Garmin не принял логин/пароль. Проверь их и повтори /link_garmin."
+                )
+            else:
+                await status_msg.edit_text(
+                    "Не получилось загрузить историю (Garmin капризничает). "
+                    "Нажми 🌅 Утро — попробуем ещё раз."
+                )
+            return
+        finally:
+            stop.set()
+            with contextlib.suppress(Exception):
+                await spinner
+
+        with contextlib.suppress(Exception):
+            await status_msg.delete()
+
+        summary = self._service.get_sync_summary(user_id)
+        n_workouts = summary.workouts_rows if summary else 0
+        text = (
+            f"📖 Готово! Загрузил историю: {n_workouts} тренировок, сон и пульс за год.\n\n"
+            "Чтобы я работал как тренер, а не просто читал данные, не хватает двух вещей:\n"
+            "🎯 Цель — просто напиши, например: «моя цель — полумарафон из 1:45»\n"
+            "📋 Профиль — кнопка ниже, анкета на 2 минуты (дни бега, травмы, город для погоды)\n\n"
+            "А завтра после сна жми 🌅 Утро — разберу восстановление и скажу, чем заняться."
         )
+        if self._storage.get_nudge_history(user_id).get("onboarding"):
+            text = f"📖 История обновлена: {n_workouts} тренировок. Жми 🌅 Утро!"
+        await message.reply_text(text, reply_markup=MAIN_KEYBOARD)
+        self._storage.log_nudge(user_id, "onboarding")
+        self._storage.add_message(user_id, "assistant", text, source="onboarding")
 
     async def _animate(self, message, stop: asyncio.Event, stages: list[str]) -> None:
         dots = ""

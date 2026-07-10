@@ -1125,9 +1125,10 @@ def overload_verdict(
 # Философия прежняя: ЧТО просить и КОГДА — решает код; бот лишь показывает
 # готовую строку-подсказку (одну за раз) в подвале Утра/Плана.
 
-NUDGE_REPEAT_DAYS = 7    # повтор той же подсказки не чаще раза в неделю
-NUDGE_MAX_SHOWN = 2      # после стольких показов...
-NUDGE_SNOOZE_DAYS = 30   # ...замолкаем про этот пробел на месяц
+NUDGE_REPEAT_DAYS = 7          # повтор той же подсказки не чаще раза в неделю
+NUDGE_REPEAT_DAYS_NEWBIE = 2   # пока нет ни цели, ни анкеты — напоминаем чаще
+NUDGE_MAX_SHOWN = 2            # после стольких показов...
+NUDGE_SNOOZE_DAYS = 30         # ...замолкаем про этот пробел на месяц
 
 
 @dataclass(frozen=True)
@@ -1185,6 +1186,7 @@ def pick_nudge(
     gaps: list[DataGap],
     history: dict[str, tuple[int, str | None]],
     today: date,
+    repeat_days: int = NUDGE_REPEAT_DAYS,
 ) -> DataGap | None:
     """Первый пробел, который сейчас можно показать (history: key → (показов, последний ISO))."""
     for gap in gaps:
@@ -1195,7 +1197,7 @@ def pick_nudge(
             last = date.fromisoformat(str(last_iso)[:10])
         except ValueError:
             return gap
-        wait = NUDGE_SNOOZE_DAYS if shown >= NUDGE_MAX_SHOWN else NUDGE_REPEAT_DAYS
+        wait = NUDGE_SNOOZE_DAYS if shown >= NUDGE_MAX_SHOWN else repeat_days
         if (today - last).days >= wait:
             return gap
     return None

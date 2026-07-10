@@ -607,7 +607,11 @@ class ReportsMixin:
                 lthr=fp.get("lthr") if metrics else 0,
                 weight_kg=fp.get("weight_kg") if metrics else 0,
             )
-            nudge = _coach.pick_nudge(gaps, self._storage.get_nudge_history(user_id), today)
+            # Новичок (ни цели, ни анкеты) — напоминаем чаще, пока не настроится
+            newbie = not (goal or "").strip() and not profile.get("profile_completed")
+            repeat = _coach.NUDGE_REPEAT_DAYS_NEWBIE if newbie else _coach.NUDGE_REPEAT_DAYS
+            nudge = _coach.pick_nudge(gaps, self._storage.get_nudge_history(user_id), today,
+                                      repeat_days=repeat)
             if not nudge:
                 return None
             self._storage.log_nudge(user_id, nudge.key)
