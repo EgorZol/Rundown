@@ -315,11 +315,17 @@ class ReportsMixin:
             for chunk in self._split(nutrition_report):
                 await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
+        # Одна подсказка о недостающих данных (цель/гонка/профиль…) — в самом конце
+        nudge_line = self._data_gap_footer(user_id, metrics, today)
+        if nudge_line:
+            await update.message.reply_text(nudge_line, reply_markup=MAIN_KEYBOARD)
+
         # Сохраняем полностью — обрывок в 800 симв. отравлял будущий контекст
         # (бот не видел собственного вывода, переспрашивал результат гонки и т.п.).
         # Окно conversation_messages всё равно ограничено keep_last=60 на юзера.
         self._storage.add_message(user_id, "user", BTN_MORNING, source="morning")
-        morning_full = full_text + (f"\n\n{nutrition_report}" if nutrition_report else "")
+        morning_full = full_text + (f"\n\n{nutrition_report}" if nutrition_report else "") \
+            + (f"\n\n{nudge_line}" if nudge_line else "")
         self._storage.add_message(user_id, "assistant", morning_full, source="morning")
 
     async def handle_workout(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -510,6 +516,7 @@ class ReportsMixin:
             await status_msg.edit_text("Уже идёт синхронизация, подожди немного…")
             return
 
+        metrics = None
         try:
             async with lock:
                 password = self._box.decrypt(creds.password_encrypted)
@@ -574,6 +581,40 @@ class ReportsMixin:
         chunks = self._split(plan_text)
         for chunk in chunks:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
+
+        nudge_line = self._data_gap_footer(user_id, metrics, today)
+        if nudge_line:
+            await update.message.reply_text(nudge_line, reply_markup=MAIN_KEYBOARD)
+            self._storage.add_message(user_id, "assistant", nudge_line, source="plan")
+
+    def _data_gap_footer(self, user_id: int, metrics: dict | None, today) -> str | None:
+        """Одна подсказка о пробеле в данных (или None). Никогда не валит отчёт.
+
+        lthr/weight в metrics["fitness_profile"] уже объединены с ручными
+        override'ами (_get_metrics); если metrics нет — эти два пробела
+        пропускаем, чтобы не просить то, что может лежать в Garmin.
+        """
+        try:
+            from . import coach as _coach
+            profile = self._storage.get_profile_override(user_id)
+            goal = self._storage.get_goal(user_id)
+            races = self._storage.get_races(user_id, from_date=today.isoformat())
+            fp = (metrics or {}).get("fitness_profile") or {}
+            gaps = _coach.data_gaps(
+                goal=goal,
+                has_future_races=bool(races),
+                profile=profile,
+                lthr=fp.get("lthr") if metrics else 0,
+                weight_kg=fp.get("weight_kg") if metrics else 0,
+            )
+            nudge = _coach.pick_nudge(gaps, self._storage.get_nudge_history(user_id), today)
+            if not nudge:
+                return None
+            self._storage.log_nudge(user_id, nudge.key)
+            return f"💡 Кстати: {nudge.hint}"
+        except Exception:
+            logger.exception("data-gap footer failed for user %s", user_id)
+            return None
 
     async def handle_sport_status(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         self._track_event(update, "sport_status")

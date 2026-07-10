@@ -1119,3 +1119,83 @@ def overload_verdict(
                 "признак накопленной усталости, принудительное восстановление")
 
     return None
+
+
+# ── Пробелы в данных юзера: детерминированный чек-лист + троттлинг подсказок ─
+# Философия прежняя: ЧТО просить и КОГДА — решает код; бот лишь показывает
+# готовую строку-подсказку (одну за раз) в подвале Утра/Плана.
+
+NUDGE_REPEAT_DAYS = 7    # повтор той же подсказки не чаще раза в неделю
+NUDGE_MAX_SHOWN = 2      # после стольких показов...
+NUDGE_SNOOZE_DAYS = 30   # ...замолкаем про этот пробел на месяц
+
+
+@dataclass(frozen=True)
+class DataGap:
+    key: str
+    hint: str
+
+
+def data_gaps(
+    *,
+    goal: str | None,
+    has_future_races: bool,
+    profile: dict,
+    lthr: float | None,
+    weight_kg: float | None,
+) -> list[DataGap]:
+    """Пробелы в данных по убыванию важности.
+
+    lthr/weight_kg передавать УЖЕ объединёнными (Garmin + ручной override,
+    как в metrics["fitness_profile"]) — просим только то, чего нет нигде.
+    """
+    gaps: list[DataGap] = []
+    if not (goal or "").strip():
+        gaps.append(DataGap(
+            "goal",
+            "у тебя не задана тренировочная цель — без неё план и прогресс работают вслепую. "
+            "Просто скажи, например: «моя цель — полумарафон из 1:45»"))
+    elif not has_future_races:
+        gaps.append(DataGap(
+            "race",
+            "в календаре нет будущих стартов — с гонкой план выстроит фазы подготовки. "
+            "Скажи: «добавь Московский марафон 27.09, цель 3:30»"))
+    if not profile.get("available_days"):
+        gaps.append(DataGap(
+            "available_days",
+            "я не знаю, в какие дни ты можешь бегать — план будет точнее. "
+            "Нажми 📋 Профиль — анкета доспросит недостающее"))
+    if not profile.get("location_name"):
+        gaps.append(DataGap(
+            "location",
+            "не указан город — без него в плане нет прогноза погоды. Нажми 📋 Профиль"))
+    if lthr is None:
+        gaps.append(DataGap(
+            "lthr",
+            "нет лактатного порога (LTHR) — с ним пульсовые зоны точнее. "
+            "Скажи: «мой порог 172» (как измерить — спроси меня)"))
+    if weight_kg is None:
+        gaps.append(DataGap(
+            "weight",
+            "нет веса — он нужен для калорий и оценки темпов. Скажи: «мой вес 72.5»"))
+    return gaps
+
+
+def pick_nudge(
+    gaps: list[DataGap],
+    history: dict[str, tuple[int, str | None]],
+    today: date,
+) -> DataGap | None:
+    """Первый пробел, который сейчас можно показать (history: key → (показов, последний ISO))."""
+    for gap in gaps:
+        shown, last_iso = history.get(gap.key, (0, None))
+        if shown == 0 or not last_iso:
+            return gap
+        try:
+            last = date.fromisoformat(str(last_iso)[:10])
+        except ValueError:
+            return gap
+        wait = NUDGE_SNOOZE_DAYS if shown >= NUDGE_MAX_SHOWN else NUDGE_REPEAT_DAYS
+        if (today - last).days >= wait:
+            return gap
+    return None

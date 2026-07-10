@@ -315,6 +315,40 @@ class Storage:
                 "CREATE INDEX IF NOT EXISTS idx_token_usage_user_at "
                 "ON token_usage(user_id, created_at)"
             )
+            # Показы подсказок о недостающих данных (coach.data_gaps) —
+            # для троттлинга «не чаще раза в неделю, после 2 показов — месяц»
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS nudge_log (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    gap_key TEXT NOT NULL,
+                    shown_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_nudge_user_key ON nudge_log(user_id, gap_key)"
+            )
+
+    def log_nudge(self, user_id: int, gap_key: str) -> None:
+        """Зафиксировать показ подсказки о пробеле в данных."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO nudge_log (user_id, gap_key, shown_at) VALUES (?, ?, ?)",
+                (user_id, gap_key, now_iso),
+            )
+
+    def get_nudge_history(self, user_id: int) -> dict[str, tuple[int, str | None]]:
+        """gap_key → (число показов, последний shown_at ISO) — вход для coach.pick_nudge."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT gap_key, COUNT(*), MAX(shown_at) FROM nudge_log "
+                "WHERE user_id = ? GROUP BY gap_key",
+                (user_id,),
+            ).fetchall()
+        return {key: (cnt, last) for key, cnt, last in rows}
 
     def log_token_usage(
         self, user_id: int | None, method: str, model: str,

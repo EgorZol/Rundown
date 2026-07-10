@@ -484,3 +484,57 @@ class TestPlanLineForDate(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestDataGaps(unittest.TestCase):
+    """coach.data_gaps + pick_nudge: чек-лист пробелов и троттлинг подсказок."""
+
+    FULL_PROFILE = {"available_days": "[0,2,5]", "location_name": "Москва, Россия"}
+
+    def test_no_gaps_when_everything_set(self):
+        gaps = coach.data_gaps(goal="полумарафон из 1:45", has_future_races=True,
+                               profile=self.FULL_PROFILE, lthr=172.0, weight_kg=72.5)
+        self.assertEqual(gaps, [])
+
+    def test_goal_is_top_priority(self):
+        gaps = coach.data_gaps(goal=None, has_future_races=False, profile={},
+                               lthr=None, weight_kg=None)
+        self.assertEqual(gaps[0].key, "goal")
+        self.assertEqual([g.key for g in gaps],
+                         ["goal", "available_days", "location", "lthr", "weight"])
+
+    def test_race_gap_only_when_goal_set(self):
+        gaps = coach.data_gaps(goal="марафон", has_future_races=False,
+                               profile=self.FULL_PROFILE, lthr=172.0, weight_kg=72.5)
+        self.assertEqual([g.key for g in gaps], ["race"])
+
+    def test_pick_first_never_shown(self):
+        gaps = coach.data_gaps(goal=None, has_future_races=False, profile={},
+                               lthr=None, weight_kg=None)
+        picked = coach.pick_nudge(gaps, {}, date(2026, 7, 10))
+        self.assertEqual(picked.key, "goal")
+
+    def test_shown_today_throttled_next_gap_offered(self):
+        gaps = coach.data_gaps(goal=None, has_future_races=False, profile={},
+                               lthr=None, weight_kg=None)
+        history = {"goal": (1, "2026-07-10T05:00:00+00:00")}
+        picked = coach.pick_nudge(gaps, history, date(2026, 7, 10))
+        self.assertEqual(picked.key, "available_days")
+
+    def test_repeat_after_week(self):
+        gaps = [coach.DataGap("goal", "…")]
+        history = {"goal": (1, "2026-07-01T05:00:00+00:00")}
+        self.assertIsNotNone(coach.pick_nudge(gaps, history, date(2026, 7, 10)))
+
+    def test_snooze_month_after_two_shows(self):
+        gaps = [coach.DataGap("goal", "…")]
+        history = {"goal": (2, "2026-07-01T05:00:00+00:00")}
+        self.assertIsNone(coach.pick_nudge(gaps, history, date(2026, 7, 10)))
+        self.assertIsNotNone(coach.pick_nudge(gaps, history, date(2026, 8, 5)))
+
+    def test_all_throttled_returns_none(self):
+        gaps = coach.data_gaps(goal="цель", has_future_races=True,
+                               profile=self.FULL_PROFILE, lthr=None, weight_kg=None)
+        history = {"lthr": (1, "2026-07-09T05:00:00+00:00"),
+                   "weight": (1, "2026-07-09T05:00:00+00:00")}
+        self.assertIsNone(coach.pick_nudge(gaps, history, date(2026, 7, 10)))
