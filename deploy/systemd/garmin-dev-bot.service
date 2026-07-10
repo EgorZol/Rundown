@@ -1,0 +1,16 @@
+[Unit]
+Description=Garmin Coach Bot — DEV instance (ручной запуск для проверки хендлеров)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/garmin-analysis-and-backup
+Environment=PYTHONPATH=%h/garmin-analysis-and-backup/src
+# Порядок важен: .env.dev ПОСЛЕ .env — его значения перекрывают продовые
+EnvironmentFile=%h/garmin-analysis-and-backup/.env
+EnvironmentFile=%h/garmin-analysis-and-backup/.env.dev
+ExecStart=%h/garmin-analysis-and-backup/.venv/bin/python -m garmin_backup_bot.main
+Restart=no
+
+[Install]
+WantedBy=default.target

@@ -191,6 +191,12 @@ CI: pre-commit hook (`.githooks/pre-commit`, включается `git config co
 | Логи | `journalctl --user -u garmin-backup-bot -n 30` | При ошибках |
 | Коммит | `git add . && git commit -m "описание"` | После успешной проверки и перезапуска |
 
+## Dev-бот (проверка хендлеров без прода)
+
+- **@Rundown_dev_bot** — второй инстанс на этом же коде: `systemctl --user start garmin-dev-bot.service` (обычно ВЫКЛЮЧЕН — 2-ядерный сервер, запускать на время проверки и гасить `stop`)
+- Полная изоляция: токен и пути в `.env.dev` (не в git), данные в `data-dev/` — прод-БД не трогается; секреты Claude/OpenAI/Fernet наследуются из `.env`
+- Правишь хендлеры/UI — прогони руками на dev-боте ПЕРЕД рестартом прода
+
 ## Деплой
 
 - **Бот**: systemd user service из `.venv`, working dir `/home/evg/garmin-analysis-and-backup`
