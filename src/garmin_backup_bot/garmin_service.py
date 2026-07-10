@@ -437,9 +437,14 @@ class GarminService:
                 f"/weight-service/weight/dateRange"
                 f"?startDate={start_date.isoformat()}&endDate={end_date.isoformat()}",
             )
-            for day_entry in (raw or {}).get("dailyWeightSummaries", []):
-                grams = (day_entry.get("latestWeight") or {}).get("weight")
-                day_str = day_entry.get("summaryDate")
+            # API отдаёт две формы: dailyWeightSummaries (latestWeight.weight)
+            # или dateWeightList (weight плоско) — встречались обе.
+            entries = ((raw or {}).get("dailyWeightSummaries") or []) + \
+                      ((raw or {}).get("dateWeightList") or [])
+            for day_entry in entries:
+                grams = ((day_entry.get("latestWeight") or {}).get("weight")
+                         or day_entry.get("weight"))
+                day_str = day_entry.get("summaryDate") or day_entry.get("calendarDate")
                 if grams and day_str:
                     weight_rows.append((day_str, grams / 1000.0))
         except Exception as exc:

@@ -1,0 +1,27 @@
+{
+ "userInfo": {
+  "birthDate": "user",
+  "genderType": "MALE",
+  "email": "user",
+  "locale": "ru",
+  "timeZone": "Europe/Moscow",
+  "age": 37,
+  "countryCode": "RU"
+ },
+ "biometricProfile": {
+  "userId": 0,
+  "height": 183.0,
+  "weight": 85000.0,
+  "vo2Max": 49.0,
+  "vo2MaxCycling": null,
+  "vo2MaxRowing": null,
+  "lactateThresholdHeartRate": 177.0,
+  "activityClass": null,
+  "functionalThresholdPower": null,
+  "criticalSwimSpeed": null
+ },
+ "timeZone": "Europe/Moscow",
+ "locale": "ru",
+ "gender": "MALE",
+ "birthDate": "user"
+}

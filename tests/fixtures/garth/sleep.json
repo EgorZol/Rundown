@@ -1,0 +1,1389 @@
+{
+ "dailySleepDTO": {
+  "id": 1782855283000,
+  "userProfilePK": 137518065,
+  "calendarDate": "2026-07-01",
+  "sleepTimeSeconds": 24000,
+  "napTimeSeconds": 0,
+  "sleepWindowConfirmed": true,
+  "sleepWindowConfirmationType": "enhanced_confirmed_final",
+  "sleepStartTimestampGMT": 1782855283000,
+  "sleepEndTimestampGMT": 1782880783000,
+  "sleepStartTimestampLocal": 1782866083000,
+  "sleepEndTimestampLocal": 1782891583000,
+  "autoSleepStartTimestampGMT": null,
+  "autoSleepEndTimestampGMT": null,
+  "sleepQualityTypePK": null,
+  "sleepResultTypePK": null,
+  "unmeasurableSleepSeconds": 0,
+  "deepSleepSeconds": 6420,
+  "lightSleepSeconds": 14940,
+  "remSleepSeconds": 2640,
+  "awakeSleepSeconds": 1500,
+  "deviceRemCapable": true,
+  "retro": false,
+  "sleepFromDevice": true,
+  "averageSpO2Value": 96.0,
+  "lowestSpO2Value": 85,
+  "highestSpO2Value": 100,
+  "averageSpO2HRSleep": 44.0,
+  "averageRespirationValue": 12.0,
+  "lowestRespirationValue": 9.0,
+  "highestRespirationValue": 15.0,
+  "awakeCount": 2,
+  "avgSleepStress": 14.0,
+  "ageGroup": "ADULT",
+  "avgHeartRate": 44.0,
+  "sleepScoreFeedback": "POSITIVE_DEEP",
+  "sleepScoreInsight": "POSITIVE_RESTFUL_EVENING",
+  "sleepScorePersonalizedInsight": "STRESS_POS_FAIR_OR_POOR_SLEEP_RESTFUL_DAY",
+  "sleepScores": {
+   "totalDuration": {
+    "qualifierKey": "FAIR",
+    "optimalStart": 28200.0,
+    "optimalEnd": 28200.0
+   },
+   "stress": {
+    "qualifierKey": "GOOD",
+    "optimalStart": 0.0,
+    "optimalEnd": 15.0
+   },
+   "awakeCount": {
+    "qualifierKey": "FAIR",
+    "optimalStart": 0.0,
+    "optimalEnd": 1.0
+   },
+   "overall": {
+    "value": 76,
+    "qualifierKey": "FAIR"
+   },
+   "remPercentage": {
+    "value": 11,
+    "qualifierKey": "FAIR",
+    "optimalStart": 21.0,
+    "optimalEnd": 31.0,
+    "idealStartInSeconds": 5040.0,
+    "idealEndInSeconds": 7440.0
+   },
+   "restlessness": {
+    "qualifierKey": "FAIR",
+    "optimalStart": 0.0,
+    "optimalEnd": 5.0
+   },
+   "lightPercentage": {
+    "value": 62,
+    "qualifierKey": "GOOD",
+    "optimalStart": 30.0,
+    "optimalEnd": 64.0,
+    "idealStartInSeconds": 7200.0,
+    "idealEndInSeconds": 15360.0
+   },
+   "deepPercentage": {
+    "value": 27,
+    "qualifierKey": "EXCELLENT",
+    "optimalStart": 16.0,
+    "optimalEnd": 33.0,
+    "idealStartInSeconds": 3840.0,
+    "idealEndInSeconds": 7920.0
+   }
+  },
+  "sleepVersion": 2,
+  "sleepNeed": {
+   "userProfilePk": 0,
+   "calendarDate": "2026-07-01",
+   "deviceId": 3610195164,
+   "timestampGmt": "2026-06-30T04:05:43",
+   "baseline": 470,
+   "actual": 520,
+   "feedback": "HIGHLY_INCREASED",
+   "trainingFeedback": "NO_CHANGE",
+   "sleepHistoryAdjustment": "INCREASING",
+   "hrvAdjustment": "INCREASING",
+   "napAdjustment": "NO_CHANGE",
+   "displayedForTheDay": true,
+   "preferredActivityTracker": true
+  },
+  "nextSleepNeed": {
+   "userProfilePk": 0,
+   "calendarDate": "2026-07-02",
+   "deviceId": 3610195164,
+   "timestampGmt": "2026-07-01T16:55:11",
+   "baseline": 470,
+   "actual": 510,
+   "feedback": "INCREASED",
+   "trainingFeedback": "NO_CHANGE",
+   "sleepHistoryAdjustment": "INCREASING",
+   "hrvAdjustment": "INCREASING",
+   "napAdjustment": "NO_CHANGE",
+   "displayedForTheDay": true,
+   "preferredActivityTracker": true
+  },
+  "breathingDisruptionSeverity": "NONE"
+ },
+ "remSleepData": true,
+ "restlessMomentsCount": 30,
+ "wellnessSpO2SleepSummaryDTO": {
+  "userProfilePk": 0,
+  "deviceId": 3610195164,
+  "sleepMeasurementStartGMT": "2026-06-30T21:35:00.0",
+  "sleepMeasurementEndGMT": "2026-07-01T03:59:00.0",
+  "alertThresholdValue": null,
+  "numberOfEventsBelowThreshold": null,
+  "durationOfEventsBelowThreshold": null,
+  "averageSPO2": 96.0,
+  "averageSpO2HR": 44.0,
+  "lowestSPO2": 85
+ },
+ "wellnessEpochRespirationDataDTOList": [
+  {
+   "startTimeGMT": 1782855283000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782855360000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782855480000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782855600000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782855720000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782855840000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782855960000,
+   "respirationValue": 15.0
+  },
+  {
+   "startTimeGMT": 1782856080000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782856200000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782856320000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782856440000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782856560000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782856680000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782856800000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782856920000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782857040000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782857160000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782857280000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782857400000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782857520000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782857640000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782857760000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782857880000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782858000000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782858120000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782858240000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782858360000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782858480000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782858600000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782858720000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782858840000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782858960000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782859080000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782859200000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782859320000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782859440000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782859560000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782859680000,
+   "respirationValue": 15.0
+  },
+  {
+   "startTimeGMT": 1782859800000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782859920000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782860040000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782860160000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782860280000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782860400000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782860520000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782860640000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782860760000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782860880000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782861000000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782861120000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782861240000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782861360000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782861480000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782861600000,
+   "respirationValue": 10.0
+  },
+  {
+   "startTimeGMT": 1782861720000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782861840000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782861960000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782862080000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782862200000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782862320000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782862440000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782862560000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782862680000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782862800000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782862920000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782863040000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782863160000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782863280000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782863400000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782863520000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782863640000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782863760000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782863880000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782864000000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782864120000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782864240000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782864360000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782864480000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782864600000,
+   "respirationValue": 15.0
+  },
+  {
+   "startTimeGMT": 1782864720000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782864840000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782864960000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782865080000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782865200000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782865320000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782865440000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782865560000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782865680000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782865800000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782865920000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782866040000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782866160000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782866280000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782866400000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782866520000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782866640000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782866760000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782866880000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782867000000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782867120000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782867240000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782867360000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782867480000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782867600000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782867720000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782867840000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782867960000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782868080000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782868200000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782868320000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782868440000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782868560000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782868680000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782868800000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782868920000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782869040000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782869160000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782869280000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782869400000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782869520000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782869640000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782869760000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782869880000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782870000000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782870120000,
+   "respirationValue": 15.0
+  },
+  {
+   "startTimeGMT": 1782870240000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782870360000,
+   "respirationValue": 15.0
+  },
+  {
+   "startTimeGMT": 1782870480000,
+   "respirationValue": 14.0
+  },
+  {
+   "startTimeGMT": 1782870600000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782870720000,
+   "respirationValue": 15.0
+  },
+  {
+   "startTimeGMT": 1782870840000,
+   "respirationValue": 15.0
+  },
+  {
+   "startTimeGMT": 1782870960000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782871080000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782871200000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782871320000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782871440000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782871560000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782871680000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782871800000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782871920000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782872040000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782872160000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782872280000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782872400000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782872520000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782872640000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782872760000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782872880000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782873000000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782873120000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782873240000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782873360000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782873480000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782873600000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782873720000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782873840000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782873960000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782874080000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782874200000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782874320000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782874440000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782874560000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782874680000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782874800000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782874920000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782875040000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782875160000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782875280000,
+   "respirationValue": 10.0
+  },
+  {
+   "startTimeGMT": 1782875400000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782875520000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782875640000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782875760000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782875880000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782876000000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782876120000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782876240000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782876360000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782876480000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782876600000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782876720000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782876840000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782876960000,
+   "respirationValue": 9.0
+  },
+  {
+   "startTimeGMT": 1782877080000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782877200000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782877320000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782877440000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782877560000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782877680000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782877800000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782877920000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782878040000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782878160000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782878280000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782878400000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782878520000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782878640000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782878760000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782878880000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782879000000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782879120000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782879240000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782879360000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782879480000,
+   "respirationValue": 13.0
+  },
+  {
+   "startTimeGMT": 1782879600000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782879720000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782879840000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782879960000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782880080000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782880200000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782880320000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782880440000,
+   "respirationValue": 11.0
+  },
+  {
+   "startTimeGMT": 1782880560000,
+   "respirationValue": 12.0
+  },
+  {
+   "startTimeGMT": 1782880680000,
+   "respirationValue": 12.0
+  }
+ ],
+ "wellnessEpochRespirationAveragesList": [
+  {
+   "epochEndTimestampGmt": 1782856800000,
+   "respirationAverageValue": -2.0,
+   "respirationHighValue": null,
+   "respirationLowValue": null
+  },
+  {
+   "epochEndTimestampGmt": 1782860400000,
+   "respirationAverageValue": 13.28,
+   "respirationHighValue": 16.0,
+   "respirationLowValue": 11.0
+  },
+  {
+   "epochEndTimestampGmt": 1782864000000,
+   "respirationAverageValue": 12.08,
+   "respirationHighValue": 15.0,
+   "respirationLowValue": 8.0
+  },
+  {
+   "epochEndTimestampGmt": 1782867600000,
+   "respirationAverageValue": 12.61,
+   "respirationHighValue": 15.0,
+   "respirationLowValue": 10.0
+  },
+  {
+   "epochEndTimestampGmt": 1782871200000,
+   "respirationAverageValue": 12.86,
+   "respirationHighValue": 16.0,
+   "respirationLowValue": 9.0
+  },
+  {
+   "epochEndTimestampGmt": 1782874800000,
+   "respirationAverageValue": 12.01,
+   "respirationHighValue": 15.0,
+   "respirationLowValue": 10.0
+  },
+  {
+   "epochEndTimestampGmt": 1782878400000,
+   "respirationAverageValue": 11.96,
+   "respirationHighValue": 14.0,
+   "respirationLowValue": 8.0
+  },
+  {
+   "epochEndTimestampGmt": 1782880740000,
+   "respirationAverageValue": -2.0,
+   "respirationHighValue": null,
+   "respirationLowValue": null
+  }
+ ],
+ "respirationVersion": 200,
+ "skinTempDataExists": false,
+ "hrvData": [
+  {
+   "value": 69.0,
+   "startGMT": 1782855405000
+  },
+  {
+   "value": 60.0,
+   "startGMT": 1782855705000
+  },
+  {
+   "value": 59.0,
+   "startGMT": 1782856005000
+  },
+  {
+   "value": 53.0,
+   "startGMT": 1782856305000
+  },
+  {
+   "value": 55.0,
+   "startGMT": 1782856605000
+  },
+  {
+   "value": 53.0,
+   "startGMT": 1782856905000
+  },
+  {
+   "value": 52.0,
+   "startGMT": 1782857205000
+  },
+  {
+   "value": 58.0,
+   "startGMT": 1782857505000
+  },
+  {
+   "value": 58.0,
+   "startGMT": 1782857805000
+  },
+  {
+   "value": 59.0,
+   "startGMT": 1782858105000
+  },
+  {
+   "value": 54.0,
+   "startGMT": 1782858405000
+  },
+  {
+   "value": 58.0,
+   "startGMT": 1782858705000
+  },
+  {
+   "value": 48.0,
+   "startGMT": 1782859005000
+  },
+  {
+   "value": 67.0,
+   "startGMT": 1782859305000
+  },
+  {
+   "value": 68.0,
+   "startGMT": 1782859605000
+  },
+  {
+   "value": 61.0,
+   "startGMT": 1782859905000
+  },
+  {
+   "value": 54.0,
+   "startGMT": 1782860205000
+  },
+  {
+   "value": 68.0,
+   "startGMT": 1782860505000
+  },
+  {
+   "value": 77.0,
+   "startGMT": 1782860805000
+  },
+  {
+   "value": 76.0,
+   "startGMT": 1782861105000
+  },
+  {
+   "value": 73.0,
+   "startGMT": 1782861405000
+  },
+  {
+   "value": 80.0,
+   "startGMT": 1782861705000
+  },
+  {
+   "value": 93.0,
+   "startGMT": 1782862005000
+  },
+  {
+   "value": 92.0,
+   "startGMT": 1782862305000
+  },
+  {
+   "value": 70.0,
+   "startGMT": 1782862605000
+  },
+  {
+   "value": 83.0,
+   "startGMT": 1782862905000
+  },
+  {
+   "value": 70.0,
+   "startGMT": 1782863205000
+  },
+  {
+   "value": 78.0,
+   "startGMT": 1782863505000
+  },
+  {
+   "value": 69.0,
+   "startGMT": 1782863805000
+  },
+  {
+   "value": 73.0,
+   "startGMT": 1782864105000
+  },
+  {
+   "value": 83.0,
+   "startGMT": 1782864405000
+  },
+  {
+   "value": 66.0,
+   "startGMT": 1782864705000
+  },
+  {
+   "value": 67.0,
+   "startGMT": 1782865005000
+  },
+  {
+   "value": 62.0,
+   "startGMT": 1782865305000
+  },
+  {
+   "value": 72.0,
+   "startGMT": 1782865605000
+  },
+  {
+   "value": 76.0,
+   "startGMT": 1782865905000
+  },
+  {
+   "value": 80.0,
+   "startGMT": 1782866205000
+  },
+  {
+   "value": 71.0,
+   "startGMT": 1782866505000
+  },
+  {
+   "value": 55.0,
+   "startGMT": 1782866805000
+  },
+  {
+   "value": 62.0,
+   "startGMT": 1782867105000
+  },
+  {
+   "value": 65.0,
+   "startGMT": 1782867405000
+  },
+  {
+   "value": 60.0,
+   "startGMT": 1782867705000
+  },
+  {
+   "value": 58.0,
+   "startGMT": 1782868005000
+  },
+  {
+   "value": 68.0,
+   "startGMT": 1782868305000
+  },
+  {
+   "value": 63.0,
+   "startGMT": 1782868605000
+  },
+  {
+   "value": 57.0,
+   "startGMT": 1782868905000
+  },
+  {
+   "value": 59.0,
+   "startGMT": 1782869205000
+  },
+  {
+   "value": 63.0,
+   "startGMT": 1782869505000
+  },
+  {
+   "value": 66.0,
+   "startGMT": 1782869805000
+  },
+  {
+   "value": 56.0,
+   "startGMT": 1782870105000
+  },
+  {
+   "value": 63.0,
+   "startGMT": 1782870405000
+  },
+  {
+   "value": 60.0,
+   "startGMT": 1782870705000
+  },
+  {
+   "value": 63.0,
+   "startGMT": 1782871005000
+  },
+  {
+   "value": 64.0,
+   "startGMT": 1782871305000
+  },
+  {
+   "value": 66.0,
+   "startGMT": 1782871605000
+  },
+  {
+   "value": 59.0,
+   "startGMT": 1782871905000
+  },
+  {
+   "value": 70.0,
+   "startGMT": 1782872205000
+  },
+  {
+   "value": 71.0,
+   "startGMT": 1782872505000
+  },
+  {
+   "value": 69.0,
+   "startGMT": 1782872805000
+  },
+  {
+   "value": 69.0,
+   "startGMT": 1782873105000
+  },
+  {
+   "value": 72.0,
+   "startGMT": 1782873405000
+  },
+  {
+   "value": 73.0,
+   "startGMT": 1782873705000
+  },
+  {
+   "value": 70.0,
+   "startGMT": 1782874005000
+  },
+  {
+   "value": 67.0,
+   "startGMT": 1782874305000
+  },
+  {
+   "value": 59.0,
+   "startGMT": 1782874605000
+  },
+  {
+   "value": 60.0,
+   "startGMT": 1782874905000
+  },
+  {
+   "value": 61.0,
+   "startGMT": 1782875205000
+  },
+  {
+   "value": 76.0,
+   "startGMT": 1782875505000
+  },
+  {
+   "value": 85.0,
+   "startGMT": 1782875805000
+  },
+  {
+   "value": 73.0,
+   "startGMT": 1782876105000
+  },
+  {
+   "value": 81.0,
+   "startGMT": 1782876405000
+  },
+  {
+   "value": 81.0,
+   "startGMT": 1782876705000
+  },
+  {
+   "value": 68.0,
+   "startGMT": 1782877005000
+  },
+  {
+   "value": 86.0,
+   "startGMT": 1782877305000
+  },
+  {
+   "value": 61.0,
+   "startGMT": 1782877605000
+  },
+  {
+   "value": 65.0,
+   "startGMT": 1782877905000
+  },
+  {
+   "value": 92.0,
+   "startGMT": 1782878205000
+  },
+  {
+   "value": 56.0,
+   "startGMT": 1782878505000
+  },
+  {
+   "value": 66.0,
+   "startGMT": 1782878805000
+  },
+  {
+   "value": 67.0,
+   "startGMT": 1782879105000
+  },
+  {
+   "value": 59.0,
+   "startGMT": 1782879405000
+  },
+  {
+   "value": 63.0,
+   "startGMT": 1782879705000
+  },
+  {
+   "value": 67.0,
+   "startGMT": 1782880005000
+  },
+  {
+   "value": 62.0,
+   "startGMT": 1782880305000
+  },
+  {
+   "value": 60.0,
+   "startGMT": 1782880605000
+  }
+ ],
+ "avgOvernightHrv": 67.0,
+ "hrvStatus": "UNBALANCED",
+ "bodyBatteryChange": 60,
+ "restingHeartRate": 40
+}
