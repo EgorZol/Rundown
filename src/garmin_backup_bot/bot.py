@@ -400,19 +400,13 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
         return chunks
 
 
+# Меню сознательно короткое: курс «кнопки > команды». Остальные хендлеры
+# (/plan, /goal, /race, /memory…) живы для обратной совместимости,
+# но в меню не светятся — всё есть на клавиатуре и словами.
 _BOT_COMMANDS = [
     BotCommand("start", "С чего начать"),
     BotCommand("help", "Что умеет бот"),
     BotCommand("link_garmin", "Подключить Garmin"),
-    BotCommand("plan", "Недельный план"),
-    BotCommand("goal", "Поставить цель"),
-    BotCommand("race", "Гонки и старты"),
-    BotCommand("feeling", "Записать самочувствие"),
-    BotCommand("status", "Статус подключения"),
-    BotCommand("remember", "Запомнить заметку"),
-    BotCommand("memory", "Показать заметки"),
-    BotCommand("forget", "Удалить заметку"),
-    BotCommand("profile_reset", "Сбросить профиль"),
 ]
 
 
