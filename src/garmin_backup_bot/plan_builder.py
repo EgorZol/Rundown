@@ -6,6 +6,8 @@ import urllib.request
 from datetime import date, timedelta
 from typing import TYPE_CHECKING, Any
 
+from . import coach
+
 if TYPE_CHECKING:
     from .analyst import HealthAnalyst
     from .garmin_service import GarminService
@@ -388,7 +390,7 @@ class WeeklyPlanBuilder:
             avg_hr = a.get("avg_hr")
             if not avg_speed or avg_speed <= 0 or not avg_hr or avg_hr <= 0:
                 continue
-            zsecs = self._analyst._garmin_zone_secs(a)
+            zsecs = coach.garmin_zone_secs(a)
             if zsecs:
                 total_z = sum(zsecs)
                 aero = zsecs[0] + zsecs[1] + zsecs[2]
@@ -528,7 +530,7 @@ class WeeklyPlanBuilder:
         for a in running:
             if not a.get("avg_speed") or a["avg_speed"] <= 0:
                 continue
-            zsecs = self._analyst._garmin_zone_secs(a)
+            zsecs = coach.garmin_zone_secs(a)
             if zsecs:
                 total_z = sum(zsecs)
                 aero = zsecs[0] + zsecs[1] + zsecs[2]
@@ -1151,10 +1153,10 @@ class WeeklyPlanBuilder:
             aero_secs = 0.0
             total_run_secs = 0.0
             for a in run_cur:
-                zsecs = self._analyst._garmin_zone_secs(a)
+                zsecs = coach.garmin_zone_secs(a)
                 if zsecs:
                     aero_secs += zsecs[0] + zsecs[1] + zsecs[2]  # Z1+Z2+Z3
-                total_run_secs += self._analyst._time_str_to_secs(a.get("moving_time"))
+                total_run_secs += coach._time_to_secs(a.get("moving_time"))
             if total_run_secs > 0:
                 aero_pct = round(aero_secs / total_run_secs * 100)
                 intens_pct = 100 - aero_pct
@@ -1168,17 +1170,17 @@ class WeeklyPlanBuilder:
             easy_sessions = 0
             hard_sessions = 0
             for a in run_cur:
-                zsecs = self._analyst._garmin_zone_secs(a)
+                zsecs = coach.garmin_zone_secs(a)
                 if zsecs:
                     aero = zsecs[0] + zsecs[1] + zsecs[2]
                     total_z = sum(zsecs)
                     hard = total_z > 0 and (total_z - aero) / total_z > 0.20
                 else:
                     z123 = sum(
-                        self._analyst._time_str_to_secs(a.get(f"hrz_{i}_time"))
+                        coach._time_to_secs(a.get(f"hrz_{i}_time"))
                         for i in range(1, 4)
                     )
-                    total = self._analyst._time_str_to_secs(a.get("moving_time"))
+                    total = coach._time_to_secs(a.get("moving_time"))
                     hard = total > 0 and (total - z123) / total > 0.20
                 if hard:
                     hard_sessions += 1
@@ -1319,7 +1321,7 @@ class WeeklyPlanBuilder:
         for a in (metrics.get("activities_14d") or []):
             if a.get("sport") != "running":
                 continue
-            zsecs = self._analyst._garmin_zone_secs(a)
+            zsecs = coach.garmin_zone_secs(a)
             if not zsecs:
                 continue
             z4 = zsecs[3]
@@ -1346,7 +1348,7 @@ class WeeklyPlanBuilder:
             if not avg_speed or avg_speed <= 0 or not avg_hr or avg_hr <= 0:
                 continue
             # Only easy runs: check zone distribution
-            zsecs = self._analyst._garmin_zone_secs(a)
+            zsecs = coach.garmin_zone_secs(a)
             if zsecs:
                 total_z = sum(zsecs)
                 aero = zsecs[0] + zsecs[1] + zsecs[2]

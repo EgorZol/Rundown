@@ -101,12 +101,12 @@ class FormattingMixin:
         return z, label
 
     def _garmin_zone_secs(self, activity: dict) -> list[float] | None:
-        """Return [z1_s, z2_s, z3_s, z4_s, z5_s] directly from Garmin data, or None."""
-        secs = []
-        for i in range(1, 6):
-            t = activity.get(f"hrz_{i}_time")
-            secs.append(self._time_str_to_secs(t) if t else 0.0)
-        return secs if any(s > 0 for s in secs) else None
+        """Единая реализация в coach.garmin_zone_secs; None если все нули (для рендера)."""
+        from . import coach as _coach
+        secs = _coach.garmin_zone_secs(activity)
+        if secs is None or not any(s > 0 for s in secs):
+            return None
+        return list(secs)
 
     def _format_garmin_zones(self, activity: dict) -> str | None:
         """Format Garmin zone times as 'Z1 5м / Z2 38м / Z3 8м'."""

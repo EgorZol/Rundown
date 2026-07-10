@@ -382,7 +382,7 @@ class GarminService:
         output_dir.mkdir(parents=True, exist_ok=True)
         self._init_user_dbs(user_id)
         
-        from garth import SleepData, WeightData, UserProfile, DailyBodyBatteryStress  # type: ignore
+        from garth import SleepData, UserProfile, DailyBodyBatteryStress  # type: ignore
 
         garth_client = self._garth_login(username, password, output_dir)
         start_date, end_date = self._get_sync_range(user_id, domain="health")
@@ -426,20 +426,30 @@ class GarminService:
                     )
                 )
 
-        # 2. Sync Weight list in one request
+        # 2. Sync Weight — сырой JSON мимо pydantic-моделей garth:
+        # WeightData.list падал на weight_delta=None (баг библиотеки), из-за чего
+        # таблица weight не наполнялась НИКОГДА. Берём только date + weight.
+        weight_rows: list[tuple[str, float]] = []
         logger.info("Fetching weight list...")
         try:
-            weight_list = WeightData.list(end=end_date, days=delta_days, client=garth_client)
+            raw = self._connect_api_with_retry(
+                garth_client,
+                f"/weight-service/weight/dateRange"
+                f"?startDate={start_date.isoformat()}&endDate={end_date.isoformat()}",
+            )
+            for day_entry in (raw or {}).get("dailyWeightSummaries", []):
+                grams = (day_entry.get("latestWeight") or {}).get("weight")
+                day_str = day_entry.get("summaryDate")
+                if grams and day_str:
+                    weight_rows.append((day_str, grams / 1000.0))
         except Exception as exc:
             logger.warning("Failed to fetch weight list: %s", exc)
-            weight_list = []
-            
+
         with sqlite3.connect(garmin_db, timeout=5) as conn:
-            for w in weight_list:
-                day_iso = w.calendar_date.isoformat()
+            for day_iso, kg in weight_rows:
                 conn.execute(
                     "INSERT OR REPLACE INTO weight (day, weight) VALUES (?, ?)",
-                    (day_iso, w.weight / 1000.0)
+                    (day_iso, kg)
                 )
 
         # 3. Sync Daily Summary & Stress (day-by-day)
