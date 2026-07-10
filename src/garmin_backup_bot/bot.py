@@ -3268,22 +3268,76 @@ class GarminBot:
             tool_actions.append({"kind": "goal", "text": goal_text})
             return f"OK: цель сохранена, план на эту неделю сброшен." + tail
 
-        def _set_training_goal_fn(goal_text: str) -> str:
-            # _ask_with_tools вызывает write-tools синхронно из ThreadPoolExecutor —
-            # asyncio.run() в новой event-loop безопасен (нет конфликта с polling).
-            import asyncio as _aio
+        # ── Сеттеры профиля словами (те же поля, что и текст-команды/анкета) ──
+        def _set_weight_fn(weight_kg: float) -> str:
             try:
-                return _aio.run(_set_training_goal_async(goal_text))
-            except RuntimeError:
-                # На случай если уже есть running loop — fallback на синхронную
-                # запись без race-extraction.
-                self._storage.save_goal(user_id, goal_text.strip())
-                today_d = datetime.now(self._get_user_tz(user_id)).date()
-                self._storage.clear_plan(
-                    user_id, (today_d - timedelta(days=today_d.weekday())).isoformat()
-                )
-                tool_actions.append({"kind": "goal", "text": goal_text.strip()})
-                return "OK: цель сохранена (без авто-парсинга гонок)"
+                weight_kg = float(weight_kg)
+            except Exception:
+                return "[ошибка: weight_kg должен быть числом]"
+            if not 30 <= weight_kg <= 200:
+                return "[ошибка: вес вне разумного диапазона 30–200 кг]"
+            self._storage.save_profile_override(user_id, weight_kg=weight_kg)
+            tool_actions.append({"kind": "profile_set", "field": "вес", "value": f"{weight_kg:g} кг"})
+            return f"OK: вес {weight_kg:g} кг сохранён в профиль (ISSN-нормы пересчитаются)"
+
+        def _set_lthr_fn(lthr: float) -> str:
+            try:
+                lthr = float(lthr)
+            except Exception:
+                return "[ошибка: lthr должен быть числом]"
+            if not 100 <= lthr <= 220:
+                return "[ошибка: LTHR вне диапазона 100–220]"
+            self._storage.save_profile_override(user_id, lthr=lthr)
+            tool_actions.append({"kind": "profile_set", "field": "LTHR", "value": f"{lthr:.0f} уд/мин"})
+            return f"OK: LTHR {lthr:.0f} сохранён в профиль"
+
+        def _set_timezone_fn(timezone: str) -> str:
+            tz_name = (timezone or "").strip()
+            try:
+                ZoneInfo(tz_name)
+            except Exception:
+                return f"[ошибка: неизвестный часовой пояс '{tz_name}' — нужен IANA-формат, например Europe/Moscow]"
+            self._storage.save_profile_override(user_id, timezone=tz_name)
+            tool_actions.append({"kind": "profile_set", "field": "часовой пояс", "value": tz_name})
+            return f"OK: часовой пояс {tz_name} сохранён"
+
+        def _set_experience_fn(years: float) -> str:
+            try:
+                years = float(years)
+            except Exception:
+                return "[ошибка: years должен быть числом]"
+            if not 0 <= years <= 60:
+                return "[ошибка: стаж вне диапазона 0–60 лет]"
+            self._storage.save_profile_override(user_id, running_experience_years=years)
+            tool_actions.append({"kind": "profile_set", "field": "стаж", "value": f"{years:g} лет"})
+            return f"OK: беговой стаж {years:g} лет сохранён"
+
+        # ── «Слова = кнопка»: запуск того же хендлера, что и кнопка ──
+        _ACTION_HANDLERS = {
+            "morning": self.handle_morning,
+            "workout": self.handle_workout,
+            "sport_status": self.handle_sport_status,
+            "plan": self.handle_plan,
+            "progress": self.handle_progress,
+            "weekly_summary": self.handle_weekly_summary,
+            "calories": self.handle_calories,
+            "records": self.handle_records,
+            "status": self.status,
+            "help": self.help_cmd,
+        }
+
+        async def _invoke_action_fn(action: str) -> str:
+            handler = _ACTION_HANDLERS.get((action or "").strip())
+            if handler is None:
+                return f"[ошибка: неизвестное действие '{action}'. Доступны: {', '.join(_ACTION_HANDLERS)}]"
+            # Хендлер сам синкает, считает и шлёт сообщения юзеру — тем же
+            # конвейером, что и кнопка (план: фазы, hard-safety, километраж, погода).
+            await handler(update, context)
+            return (
+                f"OK: «{action}» выполнен настоящим конвейером, результат УЖЕ отправлен юзеру "
+                "отдельными сообщениями. НЕ пересказывай и НЕ сочиняй его содержимое — "
+                "просто коротко подтверди одной фразой."
+            )
 
         write_tools = {
             "confirm_fact": _confirm_fact_fn,
@@ -3291,11 +3345,16 @@ class GarminBot:
             "forget_note": _forget_note_fn,
             "set_race_result": _set_race_result_fn,
             "record_feeling": _record_feeling_fn,
-            "set_training_goal": _set_training_goal_fn,
+            "set_training_goal": _set_training_goal_async,
             "add_race": _add_race_fn,
             "delete_race": _delete_race_fn,
             "set_race_priority": _set_race_priority_fn,
             "retract_fact": _retract_fact_fn,
+            "set_weight": _set_weight_fn,
+            "set_lthr": _set_lthr_fn,
+            "set_timezone": _set_timezone_fn,
+            "set_experience": _set_experience_fn,
+            "invoke_action": _invoke_action_fn,
         }
 
         # Stage 5: считаем факты дня и недели в коде, подаём Claude как готовые блоки
@@ -3390,6 +3449,8 @@ class GarminBot:
                     lines.append(f"🗑 Гонка #{a['id']} удалена из календаря")
                 elif k == "race_priority":
                     lines.append(f"⭐ Гонка #{a['id']}: " + ("A-гонка (главный старт)" if a["on"] else "приоритет снят"))
+                elif k == "profile_set":
+                    lines.append(f"📋 Профиль обновлён — {a['field']}: {a['value']}")
                 elif k == "feeling":
                     lines.append(f"📝 Самочувствие за сегодня: {a['score']}/5")
                 elif k == "goal":

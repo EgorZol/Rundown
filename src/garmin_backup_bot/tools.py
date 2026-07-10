@@ -369,6 +369,81 @@ def build_tool_schemas(
                 "required": ["race_id"],
             },
         })
+    if write_tools and "invoke_action" in write_tools:
+        tools.append({
+            "name": "invoke_action",
+            "description": (
+                "Запусти НАСТОЯЩИЙ конвейер кнопки — тот же код, что и нажатие. "
+                "Вызывай, когда юзер словами просит то, что делает кнопка:\n"
+                "• «составь/обнови план» → plan (фазы цикла, A-гонка, hard-safety, километраж, погода — "
+                "НИКОГДА не сочиняй план сам!)\n"
+                "• «утренний отчёт / как я восстановился» → morning (синк + брифинг)\n"
+                "• «разбери тренировку/пробежку» → workout\n"
+                "• «какая у меня форма» → sport_status; «итоги недели» → weekly_summary; "
+                "«мой прогресс» → progress; «сколько сжёг калорий» → calories; "
+                "«мои рекорды» → records; «статус/подключение» → status; «что ты умеешь» → help\n"
+                "Результат отправляется юзеру ОТДЕЛЬНЫМИ сообщениями — не пересказывай его, "
+                "просто подтверди одной фразой. Может занять до минуты (синк)."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["morning", "workout", "sport_status", "plan", "progress",
+                                 "weekly_summary", "calories", "records", "status", "help"],
+                    },
+                },
+                "required": ["action"],
+            },
+        })
+    if write_tools and "set_weight" in write_tools:
+        tools.append({
+            "name": "set_weight",
+            "description": (
+                "Сохрани вес атлета в ПРОФИЛЬ (user_profile_overrides.weight_kg). "
+                "Вызывай на «мой вес 64», «вешу теперь 72.5» и т.п. "
+                "ISSN-нормы питания считаются от этого веса. НЕ используй confirm_fact для веса."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"weight_kg": {"type": "number", "description": "кг, 30–200"}},
+                "required": ["weight_kg"],
+            },
+        })
+    if write_tools and "set_lthr" in write_tools:
+        tools.append({
+            "name": "set_lthr",
+            "description": "Сохрани пульс лактатного порога (LTHR) в профиль. «Мой порог 172» и т.п.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"lthr": {"type": "number", "description": "уд/мин, 100–220"}},
+                "required": ["lthr"],
+            },
+        })
+    if write_tools and "set_timezone" in write_tools:
+        tools.append({
+            "name": "set_timezone",
+            "description": (
+                "Сохрани часовой пояс атлета (IANA: Europe/Moscow, Asia/Dubai...). "
+                "«Я переехал в Дубай», «поставь московское время» — выведи IANA-имя сам."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"timezone": {"type": "string", "description": "IANA, например Europe/Moscow"}},
+                "required": ["timezone"],
+            },
+        })
+    if write_tools and "set_experience" in write_tools:
+        tools.append({
+            "name": "set_experience",
+            "description": "Сохрани беговой стаж в годах в профиль. «Бегаю 6 лет» и т.п.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"years": {"type": "number", "description": "лет, 0–60"}},
+                "required": ["years"],
+            },
+        })
     if save_plan_fn is not None:
         tools.append({
             "name": "save_weekly_plan",

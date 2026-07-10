@@ -94,11 +94,14 @@ class TestToolSchemas(unittest.TestCase):
         wt = {k: (lambda **kw: "OK") for k in
               ("confirm_fact", "remember_note", "forget_note",
                "set_race_result", "record_feeling", "set_training_goal",
-               "add_race", "delete_race", "set_race_priority", "retract_fact")}
+               "add_race", "delete_race", "set_race_priority", "retract_fact",
+               "invoke_action", "set_weight", "set_lthr", "set_timezone", "set_experience")}
         names = [t["name"] for t in build_tool_schemas(save_plan_fn=lambda p, w: "OK",
                                                        write_tools=wt)]
-        self.assertEqual(len(names), 14)
+        self.assertEqual(len(names), 19)
         self.assertIn("retract_fact", names)
+        self.assertIn("invoke_action", names)
+        self.assertIn("set_weight", names)
         self.assertIn("save_weekly_plan", names)
         self.assertIn("add_race", names)
         self.assertIn("delete_race", names)
@@ -106,6 +109,35 @@ class TestToolSchemas(unittest.TestCase):
         for t in build_tool_schemas(save_plan_fn=lambda p, w: "OK", write_tools=wt):
             self.assertIn("input_schema", t)
             self.assertIn("description", t)
+
+
+class TestWriteToolDispatch(unittest.TestCase):
+    """call_write_tool: sync-коллбеки зовутся напрямую, корутины await'ятся.
+
+    Регресс 10.07.2026: async-коллбек оборачивался в asyncio.run() внутри
+    работающего loop → RuntimeError → молчаливый fallback (авто-парсинг
+    гонок из цели не работал никогда).
+    """
+
+    def test_sync_and_async_callbacks(self):
+        import asyncio
+        from garmin_backup_bot.analyst import call_write_tool
+
+        def sync_fn(x: int) -> str:
+            return f"sync {x}"
+
+        async def async_fn(x: int) -> str:
+            await asyncio.sleep(0)
+            return f"async {x}"
+
+        async def main():
+            r1 = await call_write_tool(sync_fn, {"x": 1})
+            r2 = await call_write_tool(async_fn, {"x": 2})
+            return r1, r2
+
+        r1, r2 = asyncio.run(main())
+        self.assertEqual(r1, "sync 1")
+        self.assertEqual(r2, "async 2")
 
 
 if __name__ == "__main__":

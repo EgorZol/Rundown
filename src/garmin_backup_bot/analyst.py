@@ -27,6 +27,21 @@ CURRENT_USER_ID: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "garmin_bot_current_user_id", default=None
 )
 
+
+async def call_write_tool(fn: Callable[..., Any], tool_input: dict) -> str:
+    """Вызов write-tool с поддержкой async-коллбеков.
+
+    Диспатч работает в event loop бота — sync-функции зовём напрямую,
+    корутины await'им. До 10.07.2026 async-коллбеки оборачивались в
+    asyncio.run() и молча падали в fallback (loop уже запущен) —
+    авто-парсинг гонок из цели не работал никогда.
+    """
+    import inspect
+    result = fn(**tool_input)
+    if inspect.iscoroutine(result):
+        result = await result
+    return result
+
 logger = logging.getLogger(__name__)
 
 
@@ -1366,7 +1381,7 @@ class HealthAnalyst(FormattingMixin):
                                 if write_tools and block.name in write_tools:
                                     fn = write_tools[block.name]
                                     try:
-                                        save_result = fn(**(block.input or {}))
+                                        save_result = await call_write_tool(fn, block.input or {})
                                     except TypeError as e:
                                         save_result = f"[ошибка аргументов: {e}]"
                                     except Exception as e:
