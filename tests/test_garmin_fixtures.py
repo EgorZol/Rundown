@@ -79,7 +79,8 @@ class FixtureSyncTestCase(unittest.TestCase):
             def today(cls):
                 return FROZEN_TODAY
 
-        self._date_patch = patch("garmin_backup_bot.garmin_service.date", _FrozenDate)
+        # синк-код живёт в garmin_sync (распил 10.07), date патчим там
+        self._date_patch = patch("garmin_backup_bot.garmin_sync.date", _FrozenDate)
         self._date_patch.start()
         # первичный синк на 25 дней вместо 365 — быстро и покрывает даты фикстур
         self._env_patch = patch.dict("os.environ", {"GARMIN_START_DATE": "2026-06-15"})

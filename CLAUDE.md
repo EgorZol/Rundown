@@ -27,7 +27,9 @@ src/garmin_backup_bot/
 ├── tools.py            # ~330 строк. SQL-раннер (read-only, изоляция user_id) + схемы tools
 ├── coach.py            # ~900 строк. Детерминированная логика тренера: пороги, факты, валидация дат плана
 ├── plan_builder.py     # ~1700 строк. Генерация планов, тип недели (recovery/base/build/peak/taper)
-├── garmin_service.py   # ~2000 строк. Синхронизация Garmin Connect (garth), сбор метрик
+├── garmin_service.py   # ~90 строк. Фасад: __init__ + общие time/path-хелперы, публичный API прежний
+├── garmin_sync.py      # ~1170 строк. GarminSyncMixin: garth-логин, схемы БД, run_health/activity_sync
+├── garmin_metrics.py   # ~490 строк. GarminMetricsMixin: collect_* чтение метрик, рекорды, сводка синка
 ├── storage.py          # ~1100 строк. SQLite CRUD, 15 таблиц
 ├── nutrition.py        # ~700 строк. Распознавание еды (Claude Vision), ISSN-нормы
 ├── webapp.py           # FastAPI — форма для Garmin credentials (порт 8085)
@@ -43,7 +45,7 @@ src/garmin_backup_bot/
 - `bot.py` вызывает `analyst.py` для AI-анализа, `plan_builder.py` для планов, `nutrition.py` для еды
 - `analyst.py` = движок; его куски: `formatting.py` (FormattingMixin, методы доступны через self), `prompts.py` (константы + build_ask_stable_prompt), `tools.py` (make_sql_runner, build_tool_schemas)
 - При правке промптов — `prompts.py`; при правке блоков контекста — `formatting.py`; при добавлении tool'а — схема в `tools.py` + коллбек в `bot.py` + правило в промпте
-- `garmin_service.py` читает/пишет per-user SQLite БД в `data/users/{id}/DBs/`
+- `GarminService` (фасад в `garmin_service.py`) = `GarminSyncMixin` (запись: garth → SQLite) + `GarminMetricsMixin` (чтение). Правишь синк → `garmin_sync.py`, чтение метрик → `garmin_metrics.py`. Per-user БД в `data/users/{id}/DBs/`. Офлайн-страховка: `tests/test_garmin_fixtures.py` (патчит `garmin_sync.date`)
 - `storage.py` управляет `data/app.db` (credentials, планы, еда, история, профили, token_usage)
 
 ## Источники истины
@@ -52,7 +54,7 @@ src/garmin_backup_bot/
 |-----|-----|-----------|
 | Схема app.db | `storage.py:_init_schema()` | Единственное место определения таблиц |
 | Схема Garmin SQLite (real cols) | `analyst.py` tool descriptions `query_*_db` | Описания должны совпадать с реальными колонками `garmin.db` / `garmin_activities.db` |
-| Поля Garmin DB | `garmin_service.py:collect_daily_metrics()` | Какие поля доступны из Garmin |
+| Поля Garmin DB | `garmin_metrics.py:collect_daily_metrics()` | Какие поля доступны из Garmin |
 | HR-зоны | Garmin 5-zone модель | Z3 = аэробная (основная лёгкая зона), НЕ Z2 |
 | ISSN-нормы | `nutrition.py:calculate_issn_targets()` | Периодизированы по 6 типам тренировочного дня |
 | Окна фаз цикла | `plan_builder.py:_phase_windows(dist_km)` | Масштабируются по дистанции A-гонки (10К ≠ марафон) |
