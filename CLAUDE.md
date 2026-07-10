@@ -29,6 +29,7 @@ src/garmin_backup_bot/
 ├── bot_profile.py      # ~290 строк. ProfileMixin: анкета, часовой пояс, сброс профиля
 ├── bot_memory.py       # ~260 строк. MemoryMixin: заметки user_memory, теги [ЗАПОМНИТЬ]
 ├── bot_jobs.py         # ~210 строк. JobsMixin: напоминания, алерты синка, _on_error, /admin_stats
+├── bot_payments.py     # ~190 строк. PaymentsMixin: тарифы (Тренер 1490₽/Калории 299₽), триал 7дн, _gate(), инвойсы ЮKassa
 ├── analyst.py          # ~1500 строк. Движок Claude: _generate_text, tool-цикл, analyze*/ask
 ├── formatting.py       # ~950 строк. FormattingMixin — сборка текстовых блоков контекста
 ├── prompts.py          # ~530 строк. Системные промпты (статический текст без логики)
