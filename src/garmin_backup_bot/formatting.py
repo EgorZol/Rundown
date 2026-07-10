@@ -346,6 +346,22 @@ class FormattingMixin:
                 )
             parts.append("\n".join(race_lines))
 
+        # План на сегодня/завтра — строки извлечены кодом (coach.plan_line_for_date),
+        # модель НЕ должна искать их в тексте плана или истории сама
+        if metrics.get("plan_missing"):
+            parts.append("📋 [ПЛАНА НА ЭТУ НЕДЕЛЮ НЕТ — юзер его ещё не составил]")
+        elif "plan_today_line" in metrics or "plan_tomorrow_line" in metrics:
+            pl = ["📋 ПЛАН НЕДЕЛИ (строки дня извлечены кодом — задание на сегодня бери ТОЛЬКО отсюда):"]
+            today_line = metrics.get("plan_today_line")
+            pl.append(f"  [ПЛАН НА СЕГОДНЯ]: {today_line}" if today_line
+                      else "  [ПЛАНА НА СЕГОДНЯ НЕТ — в плане нет строки на эту дату]")
+            tomorrow_line = metrics.get("plan_tomorrow_line")
+            if tomorrow_line:
+                pl.append(f"  [ПЛАН НА ЗАВТРА]: {tomorrow_line}")
+            if metrics.get("plan_week_type"):
+                pl.append(f"  (тип недели: {metrics['plan_week_type']})")
+            parts.append("\n".join(pl))
+
         # Sleep (last night — may be today's date if wake-detected)
         sleep_data = metrics.get("sleep_last_night") or metrics.get("sleep")
         if sleep_data:

@@ -953,3 +953,23 @@ def reorder_primary_activity(activities: list[dict]) -> list[dict]:
     if primary is activities[0]:
         return activities
     return [primary] + [a for a in activities if a is not primary]
+
+
+def plan_line_for_date(plan_text: str | None, target: date) -> str | None:
+    """Строка плана недели для конкретной даты (по паре «Пн DD.MM»).
+
+    Инцидент 10.07.2026: утренний отчёт реконструировал «что сегодня по плану»
+    из истории чата и заявил «пробежек нет по плану», хотя в плане стоял бег
+    8 км. Строку дня извлекает код — модель получает готовую метку
+    [ПЛАН НА СЕГОДНЯ] и ничего не сопоставляет сама.
+    """
+    if not plan_text:
+        return None
+    for line in plan_text.splitlines():
+        m = _PLAN_DAY_RE.search(line)
+        if not m:
+            continue
+        d = _infer_year(int(m.group(2)), int(m.group(3)), target)
+        if d == target:
+            return line.strip()
+    return None

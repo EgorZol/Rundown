@@ -452,5 +452,35 @@ class TestPrimaryActivity(unittest.TestCase):
         self.assertEqual(coach.reorder_primary_activity([]), [])
 
 
+class TestPlanLineForDate(unittest.TestCase):
+    """Регресс 10.07.2026: «пробежек нет по плану» при плановом беге 8 км."""
+
+    PLAN = """📅 ПЛАН НА НЕДЕЛЮ — Развивающая: аэробная база
+
+Пн 06.07: уже выполнено — бег 8.1 км ✅
+Чт 09.07: уже выполнено — бег 6 км + 56 мин функциональная ✅
+Пт 10.07: лёгкий бег 8 км Z3 (132–150 уд/мин) @6:00–6:10/км. Вечер: HIIT + сайкл
+Сб 11.07: отдых или лёгкая растяжка
+Вс 12.07: длинный бег 22 км @5:50–6:00/км Z3"""
+
+    def test_friday_run_found(self):
+        line = coach.plan_line_for_date(self.PLAN, date(2026, 7, 10))
+        self.assertIn("лёгкий бег 8 км", line)
+        self.assertTrue(line.startswith("Пт 10.07"))
+
+    def test_saturday_rest_found(self):
+        self.assertIn("отдых", coach.plan_line_for_date(self.PLAN, date(2026, 7, 11)))
+
+    def test_completed_day_line_found(self):
+        self.assertIn("уже выполнено", coach.plan_line_for_date(self.PLAN, date(2026, 7, 9)))
+
+    def test_date_not_in_plan(self):
+        self.assertIsNone(coach.plan_line_for_date(self.PLAN, date(2026, 7, 13)))
+
+    def test_empty_plan(self):
+        self.assertIsNone(coach.plan_line_for_date(None, date(2026, 7, 10)))
+        self.assertIsNone(coach.plan_line_for_date("", date(2026, 7, 10)))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -450,12 +450,9 @@ class GarminBot:
         plan = plan_row[0] if plan_row else None
         if not plan:
             return
-        today_line = None
-        for line in plan.split("\n"):
-            stripped = line.strip()
-            if stripped.startswith(today_label) and today_dd_mm in stripped:
-                today_line = stripped
-                break
+        # Строку дня извлекает та же функция, что и в утреннем отчёте
+        from . import coach as _coach_plan
+        today_line = _coach_plan.plan_line_for_date(plan, today)
         if not today_line:
             return
         rest_keywords = ["отдых", "Отдых", "растяжк", "выходной"]
@@ -1917,6 +1914,20 @@ class GarminBot:
             upcoming_races = self._storage.get_races(user_id, from_date=today.isoformat())
             if upcoming_races:
                 metrics["upcoming_races"] = upcoming_races
+
+            # План недели: строки на сегодня/завтра извлекает КОД — утро больше
+            # не реконструирует план из истории чата (инцидент 10.07: «пробежек
+            # нет по плану» при плановом беге 8 км).
+            from . import coach as _coach_plan
+            week_start_iso = (today - timedelta(days=today.weekday())).isoformat()
+            plan_meta = await asyncio.to_thread(self._storage.get_plan_meta, user_id, week_start_iso)
+            if plan_meta:
+                metrics["plan_week_type"] = plan_meta.get("week_type") or ""
+                metrics["plan_today_line"] = _coach_plan.plan_line_for_date(plan_meta["plan_text"], today)
+                metrics["plan_tomorrow_line"] = _coach_plan.plan_line_for_date(
+                    plan_meta["plan_text"], today + timedelta(days=1))
+            else:
+                metrics["plan_missing"] = True
 
             # Dynamic weekly km target based on race schedule
             run_acts = [a for a in (metrics.get("activities_28d") or []) if a.get("sport") == "running"]
