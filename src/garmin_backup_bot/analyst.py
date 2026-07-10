@@ -1253,13 +1253,18 @@ class HealthAnalyst(FormattingMixin):
             {"type": "text", "text": dynamic_part},
         ]
         try:
-            if db_paths:
+            # Tools нужны не только для SQL: write-tools и invoke_action должны
+            # работать и у юзера БЕЗ Garmin-БД. До 10.07.2026 условие было
+            # «if db_paths» — свежий юзер получал QA вообще без tools, и модель
+            # имитировала <tool_call> текстом, «сохраняя» вес/цели в никуда
+            # (поймано первым прогоном scripts/run_evals.py).
+            if db_paths or write_tools or save_plan_fn:
                 return await self._ask_with_tools(
                     system=system,
                     question=question,
                     history=history,
                     user_memory=user_memory,
-                    db_paths=db_paths,
+                    db_paths=db_paths or {},
                     user_id=user_id,
                     save_plan_fn=save_plan_fn,
                     write_tools=write_tools,
