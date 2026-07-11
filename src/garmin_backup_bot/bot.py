@@ -261,7 +261,9 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
             f"  {BTN_FOOD} — записать приём пищи\n\n"
             "Полный список возможностей — /help\n"
             "Я помню всю твою историю: тренировки, сон, форму, цели.\n"
-            "Если я ошибусь — просто поправь словами, я запомню."
+            "Если я ошибусь — просто поправь словами, я запомню.\n\n"
+            "Продолжая, ты соглашаешься с офертой и политикой данных:\n"
+            "run-down.ru/oferta.html · run-down.ru/privacy.html"
         )
         await update.message.reply_text(text, reply_markup=MAIN_KEYBOARD)
         # Если Garmin ещё не привязан — отдельным сообщением показываем

@@ -143,6 +143,7 @@ def connect(request: Request, token: str = Query(..., min_length=8, max_length=1
   <main class=\"card\">
     <h1>Подключить Garmin Connect</h1>
     <p>Логин и пароль уйдут в бота и сохранятся на сервере в зашифрованном виде. Никто другой не получит к ним доступ.</p>
+    <p style=\"font-size:.85em;color:#888\">Нажимая «Сохранить», вы соглашаетесь на обработку данных Garmin, включая сведения о здоровье — <a href=\"https://run-down.ru/privacy.html\" style=\"color:#7ab8ff\">политика данных</a>.</p>
 
     <form id=\"garmin-form\">
       <input id=\"token\" name=\"token\" type=\"hidden\" value=\"{safe_token}\" />
