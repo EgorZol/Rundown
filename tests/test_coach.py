@@ -579,3 +579,14 @@ class TestSubscriptionAccess(unittest.TestCase):
     def test_garbage_paid_until(self):
         sub = {"plan": "coach", "paid_until": "когда-нибудь"}
         self.assertEqual(coach.access_level(sub, self.TODAY), "none")
+
+
+class TestPlanWeekStart(unittest.TestCase):
+    def test_weekdays_current_week(self):
+        # пн 06.07 … сб 11.07 → понедельник текущей недели
+        for d in range(6, 12):
+            self.assertEqual(coach.plan_week_start(date(2026, 7, d)), date(2026, 7, 6), d)
+
+    def test_sunday_next_week(self):
+        # вс 12.07 → план на следующую неделю (13.07)
+        self.assertEqual(coach.plan_week_start(date(2026, 7, 12)), date(2026, 7, 13))

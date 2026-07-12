@@ -477,6 +477,7 @@ class GarminSyncMixin:
                 logger.debug("Failed to get stress/bb for %s: %s", day_iso, exc)
                 
             rhr = min_hr = max_hr = calories_active = calories_total = calories_bmr = None
+            calories_consumed = None
             calories_goal = distance_km = steps = step_goal = spo2_avg = spo2_min = None
             rr_waking_avg = rr_max = rr_min = floors_up = floors_down = floors_goal = None
             moderate_min = vigorous_min = intensity_goal = sweat_loss = None
@@ -492,6 +493,9 @@ class GarminSyncMixin:
                     calories_total = summary.get("totalKilocalories") or summary.get("wellnessKilocalories")
                     calories_bmr = summary.get("bmrKilocalories")
                     calories_goal = summary.get("netCalorieGoal")
+                    # Приход ккал из Garmin Connect (юзер логирует еду в GC или
+                    # синкает MyFitnessPal и т.п.) — запрос Алины 11.07
+                    calories_consumed = summary.get("consumedKilocalories")
                     dist_m = summary.get("totalDistanceMeters") or summary.get("wellnessDistanceMeters")
                     if dist_m is not None:
                         distance_km = dist_m / 1000.0
@@ -539,7 +543,7 @@ class GarminSyncMixin:
                             self._secs_to_time_str(vigorous_min * 60) if vigorous_min is not None else _zero_t,
                             self._secs_to_time_str(intensity_goal * 60) if intensity_goal is not None else _zero_t,
                             floors_up, floors_down, floors_goal, distance_km,
-                            calories_goal, calories_total, calories_bmr, calories_active, None,
+                            calories_goal, calories_total, calories_bmr, calories_active, calories_consumed,
                             hydration_goal, hydration_intake, sweat_loss, spo2_avg, spo2_min,
                             rr_waking_avg, rr_max, rr_min, bb_charged, bb_max, bb_min, description
                         )

@@ -487,7 +487,10 @@ class ReportsMixin:
             return
 
         today = datetime.now(self._get_user_tz(user_id)).date()
-        week_start = (today - timedelta(days=today.weekday())).isoformat()
+        # В воскресенье план строится на СЛЕДУЮЩУЮ неделю (инцидент Алины 12.07)
+        from . import coach as _coach_ws
+        week_start_d = _coach_ws.plan_week_start(today)
+        week_start = week_start_d.isoformat()
 
         # Return cached plan only if generated today (stale cache misses new workouts)
         cached_row = self._storage.get_plan(user_id, week_start)
@@ -565,6 +568,7 @@ class ReportsMixin:
                     feelings=recent_feelings,
                     previous_plan=prev_plan,
                     past_races=past_races,
+                    week_start=week_start_d,
                 )
                 # Неделя известна коду заранее — даты в тексте просто переписываем
                 from . import coach as _coach
@@ -587,6 +591,11 @@ class ReportsMixin:
         chunks = self._split(plan_text)
         for chunk in chunks:
             await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
+
+        # План — в историю диалога: QA-Claude должен видеть, что реально отправлено
+        # (инцидент 12.07: «план 13–19 отправлен 👆» — которого не существовало)
+        self._storage.add_message(user_id, "user", BTN_PLAN, source="plan")
+        self._storage.add_message(user_id, "assistant", plan_text, source="plan")
 
         nudge_line = self._data_gap_footer(user_id, metrics, today)
         if nudge_line:
@@ -973,12 +982,24 @@ class ReportsMixin:
             "\n".join(lines), reply_markup=MAIN_KEYBOARD, parse_mode="HTML",
         )
 
+    # Сообщения о ЕДЕ не считаются твиком плана: «Сильно больше ем … после
+    # интенсивного бега» ловилось паттерном «больше…бега» и вместо ответа
+    # про питание юзер получал перегенерацию плана (инцидент Алины 11.07).
+    _FOOD_TOPIC = re.compile(
+        r"(?i)\b(?:ем|еда|еды|еде|едой|поел|поела|съе[лд]\w*|ккал|калори\w*|"
+        r"питани\w*|белок|белк\w*|углевод\w*|жир[аоы]?\w*|перекус\w*|голод\w*|жор)\b"
+    )
+
     def _is_plan_tweak(self, text: str) -> bool:
         """Check if the user's message is a request to adjust the current plan."""
+        if self._FOOD_TOPIC.search(text):
+            return False
         return bool(self._PLAN_TWEAK_PATTERNS.search(text))
 
     def _is_plan_request(self, text: str) -> bool:
         """Запрос на генерацию плана с нуля (без обязательного кэша)."""
+        if self._FOOD_TOPIC.search(text):
+            return False
         return bool(self._PLAN_REQUEST_PATTERNS.search(text))
 
     async def _regenerate_plan_with_tweak(
@@ -990,7 +1011,9 @@ class ReportsMixin:
         status_msg = await update.message.reply_text("Корректирую план...")
 
         today = datetime.now(self._get_user_tz(user_id)).date()
-        week_start = (today - timedelta(days=today.weekday())).isoformat()
+        from . import coach as _coach_ws
+        week_start_d = _coach_ws.plan_week_start(today)
+        week_start = week_start_d.isoformat()
 
         try:
             metrics = await asyncio.to_thread(self._get_metrics, user_id, today) or {"date": today.isoformat()}
@@ -1017,6 +1040,7 @@ class ReportsMixin:
                 upcoming_races=upcoming_races,
                 feelings=recent_feelings,
                 previous_plan=prev_plan,
+                week_start=week_start_d,
             )
             from . import coach as _coach
             plan_text, n_fixes = _coach.fix_plan_dates(plan_text, date.fromisoformat(week_start))

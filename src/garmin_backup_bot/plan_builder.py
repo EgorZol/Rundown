@@ -185,8 +185,13 @@ class WeeklyPlanBuilder:
         feelings: list[dict] | None = None,
         previous_plan: str = "",
         past_races: list[dict] | None = None,
+        week_start: date | None = None,
     ) -> tuple[str, str]:
-        """Return (plan_text, week_type_key)."""
+        """Return (plan_text, week_type_key).
+
+        week_start — понедельник ЦЕЛЕВОЙ недели плана (в воскресенье хендлер
+        передаёт следующую неделю, см. coach.plan_week_start). None — текущая.
+        """
         activities = self._service.collect_recent_activities(user_id, days=14)
         activities_14d = metrics.get("activities_14d", [])
 
@@ -210,7 +215,7 @@ class WeeklyPlanBuilder:
                 if adj:
                     paces["vdot"] = adj["corrected_paces"]
                     paces["vdot_note"] = adj["note"]
-        context = self._build_context(metrics, activities_14d, week_type, reasoning, volume_factor, paces, training_goal, upcoming_races or [], previous_plan=previous_plan)
+        context = self._build_context(metrics, activities_14d, week_type, reasoning, volume_factor, paces, training_goal, upcoming_races or [], previous_plan=previous_plan, week_start=week_start)
 
         plan_text = await self._analyst.analyze_plan(
             context, history=history, user_memory=user_memory,
@@ -832,9 +837,11 @@ class WeeklyPlanBuilder:
         training_goal: str = "",
         upcoming_races: list[dict] | None = None,
         previous_plan: str = "",
+        week_start: date | None = None,
     ) -> str:
         today = date.fromisoformat(metrics["date"]) if metrics.get("date") else date.today()
-        week_start = today - timedelta(days=today.weekday())  # Monday
+        if week_start is None:
+            week_start = today - timedelta(days=today.weekday())  # Monday
 
         parts = [f"=== ПЛАН НА НЕДЕЛЮ с {week_start.strftime('%d.%m')} ===\n"]
         if training_goal:

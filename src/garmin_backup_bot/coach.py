@@ -1245,3 +1245,16 @@ def has_access(sub: dict | None, today: date, need: str = "coach") -> bool:
     if need == "coach":
         return level == "coach"
     return level in ("coach", "calories")
+
+
+def plan_week_start(today: date) -> date:
+    """Понедельник недели, НА КОТОРУЮ строить план.
+
+    В воскресенье текущая неделя фактически прожита — юзер, просящий план,
+    хочет СЛЕДУЮЩУЮ (инцидент Алины 12.07: «план 13–19» → бот пересобирал
+    завершённую 06–12). Пн–Сб — текущая неделя.
+    """
+    monday = today - timedelta(days=today.weekday())
+    if today.weekday() == 6:  # воскресенье
+        return monday + timedelta(days=7)
+    return monday

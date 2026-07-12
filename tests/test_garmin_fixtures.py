@@ -188,3 +188,26 @@ class TestNullIntensityDay(FixtureSyncTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestCaloriesConsumed(FixtureSyncTestCase):
+    """Приход ккал из Garmin Connect (consumedKilocalories → calories_consumed).
+
+    Запрос Алины 11.07: она логирует еду в стороннем приложении, Garmin
+    показывает приход, а колонка в нашей БД оставалась NULL."""
+
+    def test_consumed_kilocalories_mapped(self):
+        base = json.loads((FIX / "daily_summary.json").read_text())
+        base["consumedKilocalories"] = 1850
+        orig = self.client.connectapi
+
+        def patched(path, **kw):
+            if "usersummary-service" in path:
+                return base
+            return orig(path, **kw)
+
+        self.client.connectapi = patched
+        self.svc.run_health_sync(UID, "u@e.com", "pw")
+        rows = self._q("garmin.db",
+                       "SELECT DISTINCT calories_consumed FROM daily_summary")
+        self.assertEqual(rows, [(1850,)])
