@@ -1258,3 +1258,55 @@ def plan_week_start(today: date) -> date:
     if today.weekday() == 6:  # воскресенье
         return monday + timedelta(days=7)
     return monday
+
+
+_SPORT_RU = {
+    "running": "бег", "trail_running": "трейл", "track_running": "бег (стадион)",
+    "treadmill_running": "бег (дорожка)", "indoor_running": "бег (манеж)",
+    "walking": "ходьба", "hiking": "хайк", "cycling": "вело", "indoor_cycling": "сайкл",
+    "lap_swimming": "плавание", "open_water_swimming": "плавание (вода)",
+    "strength_training": "силовая", "fitness_equipment": "тренажёры",
+    "yoga": "йога", "indoor_cardio": "кардио", "hiit": "HIIT", "pilates": "пилатес",
+}
+
+
+def day_activities_marker(activities: list[dict]) -> str | None:
+    """Метка [АКТИВНОСТИ ДНЯ] для разбора: все активности дня основной + итог дня.
+
+    Итог считает КОД — правило изоляции запрещает модели суммировать №2+
+    (инцидент Алины 12.07: разбор молчал про вторую ходьбу того же дня).
+    None — если активность дня одна: метка не нужна.
+    """
+    if not activities:
+        return None
+    day = (activities[0].get("start_time") or "")[:10]
+    if not day:
+        return None
+    day_acts = [a for a in activities if (a.get("start_time") or "")[:10] == day]
+    if len(day_acts) < 2:
+        return None
+    day_acts = sorted(day_acts, key=lambda a: a.get("start_time") or "")
+    parts: list[str] = []
+    total_km, total_secs = 0.0, 0
+    for a in day_acts:
+        sport_raw = a.get("sport") or "?"
+        bit = _SPORT_RU.get(sport_raw, sport_raw)
+        dist = a.get("distance")
+        if dist:
+            bit += f" {dist:.1f} км"
+            total_km += dist
+        secs = _elapsed_secs(a)
+        if secs:
+            total_secs += secs
+            h, m = divmod(secs // 60, 60)
+            bit += f" {h}:{m:02d}ч" if h else f" {m}мин"
+        parts.append(bit)
+    try:
+        label = date.fromisoformat(day).strftime("%d.%m")
+    except ValueError:
+        label = day
+    h, m = divmod(total_secs // 60, 60)
+    total_t = f"{h}:{m:02d}ч" if h else f"{m}мин"
+    km_part = f"{total_km:.1f} км, " if total_km else ""
+    return (f"[АКТИВНОСТИ ДНЯ {label}] " + " · ".join(parts)
+            + f" — итого за день: {km_part}{total_t} движения")

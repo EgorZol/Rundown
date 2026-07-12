@@ -590,3 +590,29 @@ class TestPlanWeekStart(unittest.TestCase):
     def test_sunday_next_week(self):
         # вс 12.07 → план на следующую неделю (13.07)
         self.assertEqual(coach.plan_week_start(date(2026, 7, 12)), date(2026, 7, 13))
+
+
+class TestDayActivitiesMarker(unittest.TestCase):
+    """Метка [АКТИВНОСТИ ДНЯ]: итог дня считает код (инцидент Алины 12.07)."""
+
+    W1 = {"sport": "walking", "start_time": "2026-07-12 10:00", "distance": 6.4,
+          "elapsed_time": "01:41:00"}
+    W2 = {"sport": "walking", "start_time": "2026-07-12 15:00", "distance": 9.5,
+          "elapsed_time": "01:49:00"}
+    OLD = {"sport": "running", "start_time": "2026-07-10 08:00", "distance": 8.0,
+           "elapsed_time": "00:48:00"}
+
+    def test_two_walks_same_day(self):
+        # порядок как после reorder: основная (длинная) первой
+        m = coach.day_activities_marker([self.W2, self.W1, self.OLD])
+        self.assertIn("[АКТИВНОСТИ ДНЯ 12.07]", m)
+        self.assertIn("ходьба 6.4 км", m)
+        self.assertIn("ходьба 9.5 км", m)
+        self.assertIn("15.9 км", m)          # итог дня
+        self.assertNotIn("бег 8.0", m)       # другой день не попал
+
+    def test_single_activity_no_marker(self):
+        self.assertIsNone(coach.day_activities_marker([self.W2, self.OLD]))
+
+    def test_empty(self):
+        self.assertIsNone(coach.day_activities_marker([]))

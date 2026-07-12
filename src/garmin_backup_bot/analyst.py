@@ -164,6 +164,12 @@ class HealthAnalyst(FormattingMixin):
         parts: list[str] = [
             "=== ТРЕНИРОВКИ (анализируем только #1, остальные — фон для трендов/объёма) ==="
         ]
+        # Итог дня при нескольких активностях — посчитан кодом (coach),
+        # модель его только показывает (правило изоляции запрещает ей суммировать)
+        from . import coach as _coach_day
+        _day_marker = _coach_day.day_activities_marker(activities)
+        if _day_marker:
+            parts.append(_day_marker)
         for i, a in enumerate(activities[:10], 1):
             sport = a.get("sport", "?")
             name = a.get("name") or sport
