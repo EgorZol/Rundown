@@ -49,6 +49,12 @@ TE_DEVELOPING = 3.0              # 3-4 = развитие
 TL_HEAVY = 100                   # Training Load >100 = тяжёлая нагрузка
 WALK_PCT_PAUSE = 8               # >8% времени в паузах — пометка усталости
 
+# Классификация сессии для 80/20 по сессиям (утренний бриф):
+# интенсивная = доля Z4+Z5 от HR-времени выше порога; без зон — по анаэробному TE
+INTENSIVE_Z45_TIME_SHARE = 0.20
+INTENSIVE_ANAEROBIC_TE = 2.0
+SESSIONS_INTENSIVE_MAX_SHARE = 0.34   # >1/3 сессий интенсивные = нарушение 80/20
+
 # 80/20 по фазе цикла. Каждой фазе соответствует допустимая полоса
 # Z1-Z3 % от объёма недели. Эти числа единственный источник «нормы»
 # поляризации в проекте — менять только здесь, ничего больше не править.
@@ -215,6 +221,7 @@ class MorningFacts:
     acwr: float | None
     recovery: RecoveryStatus
     yesterday_brief: str              # «10.5 км темповая Z4 (activity 1234)» или ""
+    sessions_8020: str = ""           # готовая строка 80/20 по сессиям (sessions_7d_line)
 
     def to_prompt_block(self) -> str:
         lines = ["MORNING FACTS (источник истины, считал не ты — не пересчитывай):"]
@@ -243,6 +250,8 @@ class MorningFacts:
             ))
         if self.hrv_status:
             lines.append(f"hrv_status: {self.hrv_status}")
+        if self.sessions_8020:
+            lines.append(self.sessions_8020)
         if self.avg_rr is not None:
             tail = ""
             if self.avg_rr_delta is not None and self.avg_rr_delta >= RR_SPIKE_BPM:
@@ -690,9 +699,24 @@ def compute_recovery_status(metrics: dict) -> RecoveryStatus:
     hrv = metrics.get("hrv") or {}
     hrv_status = hrv.get("status")
     if hrv_status and hrv_status.upper() in ("UNBALANCED", "LOW"):
-        drivers.append(f"HRV {hrv_status}")
-        label = "poor" if hrv_status.upper() == "UNBALANCED" else label
-        safe_hard = False if hrv_status.upper() == "UNBALANCED" else safe_hard
+        # Статус Garmin — НЕДЕЛЬНЫЙ тренд. Готовность «на сегодня» судим по
+        # ночному значению против личной базы: ночь в базе → вердикт дня не
+        # роняем (кейс 15.07: ночь 67 в базе 58–81, а бриф пугал «Осторожно»).
+        night = hrv.get("last_night_avg")
+        b_lo, b_up = hrv.get("baseline_balanced_low"), hrv.get("baseline_balanced_upper")
+        night_in_base = (
+            isinstance(night, (int, float)) and b_lo and b_up and b_lo <= night <= b_up
+        )
+        if night_in_base:
+            drivers.append(
+                f"HRV {hrv_status} — недельный тренд; ночь {night:.0f} в базе "
+                f"{b_lo}–{b_up}, сегодняшняя готовность не снижена"
+            )
+        else:
+            night_str = f"{night:.0f}" if isinstance(night, (int, float)) else "?"
+            drivers.append(f"HRV {hrv_status}, ночь {night_str} вне базы {b_lo}–{b_up}")
+            label = "poor" if hrv_status.upper() == "UNBALANCED" else label
+            safe_hard = False if hrv_status.upper() == "UNBALANCED" else safe_hard
 
     avg_rr = (sleep.get("avg_rr") or (metrics.get("avg_rr") if isinstance(metrics.get("avg_rr"), (int, float)) else None))
     avg_rr_base = (metrics.get("avg_rr_baseline_7d") or sleep.get("avg_rr_baseline_7d"))
@@ -779,6 +803,16 @@ def compute_morning_facts(metrics: dict, today: date | None = None) -> MorningFa
 
     recovery = compute_recovery_status(metrics)
 
+    # HRV: статус Garmin — недельный тренд; ночь vs база — готовность сегодня
+    hrv_status = hrv.get("status")
+    _night = hrv.get("last_night_avg")
+    _b_lo, _b_up = hrv.get("baseline_balanced_low"), hrv.get("baseline_balanced_upper")
+    if hrv_status and isinstance(_night, (int, float)) and _b_lo and _b_up:
+        _rel = ("в базе" if _b_lo <= _night <= _b_up
+                else "ниже базы" if _night < _b_lo else "выше базы")
+        hrv_status = (f"{hrv_status} (недельный тренд) · ночь {_night:.0f} мс — "
+                      f"{_rel} {_b_lo}–{_b_up}")
+
     return MorningFacts(
         date=today,
         sleep_total_h=_hours_from_minutes(sleep.get("total_sleep_secs")),
@@ -789,7 +823,7 @@ def compute_morning_facts(metrics: dict, today: date | None = None) -> MorningFa
         rhr_delta=rhr_delta,
         bb_min=bb.get("min") or bb.get("min_24h"),
         bb_max=bb.get("max") or bb.get("max_24h"),
-        hrv_status=hrv.get("status"),
+        hrv_status=hrv_status,
         avg_rr=avg_rr,
         avg_rr_baseline=avg_rr_base,
         avg_rr_delta=avg_rr_delta,
@@ -797,6 +831,7 @@ def compute_morning_facts(metrics: dict, today: date | None = None) -> MorningFa
         acwr=fitness.get("acwr") if isinstance(fitness.get("acwr"), (int, float)) else None,
         recovery=recovery,
         yesterday_brief=y_str,
+        sessions_8020=sessions_7d_line(metrics.get("activities_28d") or [], today),
     )
 
 
@@ -1310,3 +1345,31 @@ def day_activities_marker(activities: list[dict]) -> str | None:
     km_part = f"{total_km:.1f} км, " if total_km else ""
     return (f"[АКТИВНОСТИ ДНЯ {label}] " + " · ".join(parts)
             + f" — итого за день: {km_part}{total_t} движения")
+
+
+def run_is_intensive(activity: dict) -> bool:
+    """Интенсивная ли беговая сессия: доля Z4+Z5 > порога; без зон — по анаэробному TE."""
+    zs = garmin_zone_secs(activity)
+    if zs and sum(zs) > 0:
+        return (zs[3] + zs[4]) / sum(zs) > INTENSIVE_Z45_TIME_SHARE
+    ate = activity.get("anaerobic_training_effect")
+    return isinstance(ate, (int, float)) and ate >= INTENSIVE_ANAEROBIC_TE
+
+
+def sessions_7d_line(activities: list[dict], today: date) -> str:
+    """Готовая строка 80/20 по СЕССИЯМ за 7 дней — модель её только показывает.
+
+    Инцидент 15.07: без кодового вердикта бриф объявил «3 из 3 интенсивные»,
+    хотя два бега были аэробными. Пусто, если пробежек не было.
+    """
+    since = (today - timedelta(days=6)).isoformat()
+    runs = [a for a in activities
+            if a.get("sport") in RUN_SPORTS and (a.get("start_time") or "")[:10] >= since]
+    if not runs:
+        return ""
+    intensive = sum(1 for a in runs if run_is_intensive(a))
+    easy = len(runs) - intensive
+    share = intensive / len(runs)
+    verdict = "нарушен (интенсивных больше трети)" if share > SESSIONS_INTENSIVE_MAX_SHARE else "ok"
+    return (f"sessions_7d: {len(runs)} пробежек — лёгких {easy}, интенсивных {intensive} "
+            f"→ 80/20 по сессиям: {verdict}")

@@ -616,3 +616,62 @@ class TestDayActivitiesMarker(unittest.TestCase):
 
     def test_empty(self):
         self.assertIsNone(coach.day_activities_marker([]))
+
+
+class TestHrvNightAware(unittest.TestCase):
+    """UNBALANCED (недельный тренд) не роняет вердикт дня, если ночь в базе (15.07)."""
+
+    BASE = {"sleep_last_night": {"total_sleep_secs": 7*3600}, "resting_hr": {},
+            "body_battery": {"min": 80, "max": 100}}
+
+    def test_unbalanced_night_in_base_keeps_verdict(self):
+        m = dict(self.BASE, hrv={"status": "UNBALANCED", "last_night_avg": 67,
+                                 "baseline_balanced_low": 58, "baseline_balanced_upper": 81})
+        r = coach.compute_recovery_status(m)
+        self.assertNotEqual(r.label, "poor")
+        self.assertTrue(r.safe_to_train_hard)
+        self.assertTrue(any("ночь 67 в базе" in d for d in r.drivers))
+
+    def test_unbalanced_night_below_base_is_poor(self):
+        m = dict(self.BASE, hrv={"status": "UNBALANCED", "last_night_avg": 51,
+                                 "baseline_balanced_low": 58, "baseline_balanced_upper": 81})
+        r = coach.compute_recovery_status(m)
+        self.assertEqual(r.label, "poor")
+        self.assertFalse(r.safe_to_train_hard)
+
+
+class TestSessions8020(unittest.TestCase):
+    """80/20 по сессиям считает код (инцидент «3 из 3 интенсивные» 15.07)."""
+
+    TODAY = date(2026, 7, 15)
+
+    def _run(self, day, ate=0.5, **zones):
+        a = {"sport": "running", "start_time": f"2026-07-{day} 07:00",
+             "anaerobic_training_effect": ate}
+        a.update(zones)
+        return a
+
+    def test_real_case_one_intensive_of_three(self):
+        acts = [
+            self._run("09", ate=0.2),
+            self._run("12", ate=1.4, hrz_1_time="00:10:00", hrz_2_time="00:20:00",
+                      hrz_3_time="00:30:00", hrz_4_time="00:25:00", hrz_5_time="00:05:00"),
+            self._run("14", ate=1.3),
+            {"sport": "lap_swimming", "start_time": "2026-07-11 07:00"},
+        ]
+        line = coach.sessions_7d_line(acts, self.TODAY)
+        self.assertIn("3 пробежек — лёгких 2, интенсивных 1", line)
+        self.assertIn("ok", line)
+
+    def test_two_of_three_violates(self):
+        acts = [self._run("09", ate=2.5), self._run("12", ate=3.0), self._run("14", ate=0.3)]
+        self.assertIn("нарушен", coach.sessions_7d_line(acts, self.TODAY))
+
+    def test_no_runs_empty(self):
+        self.assertEqual(coach.sessions_7d_line([], self.TODAY), "")
+
+    def test_zones_beat_te(self):
+        # зоны говорят «легко» (всё в Z1-Z3) — TE игнорируется
+        a = self._run("14", ate=3.0, hrz_1_time="00:10:00", hrz_2_time="00:30:00",
+                      hrz_3_time="00:20:00", hrz_4_time="00:02:00")
+        self.assertFalse(coach.run_is_intensive(a))
