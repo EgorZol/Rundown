@@ -134,6 +134,14 @@ class JobsMixin:
         err = getattr(context, "error", None)
         if err is None:
             return
+        # Сетевые чихи поллинга (getUpdates оборвался, PTB сам ретраит) — не алертим:
+        # это самозаживающее, юзеров не задевает, а алерт в Telegram о недоступности
+        # Telegram при настоящем отказе всё равно не дойдёт. update is None = ошибка
+        # не из юзерского хендлера, а из фонового цикла.
+        from telegram.error import NetworkError, TimedOut
+        if update is None and isinstance(err, (NetworkError, TimedOut)):
+            logger.warning("Транзиентная сетевая ошибка поллинга (не алертим): %s", err)
+            return
         logger.error("Unhandled error in handler", exc_info=err)
         if not self._admin_user_ids:
             return
