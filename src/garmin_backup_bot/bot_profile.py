@@ -51,6 +51,20 @@ DAY_ALIASES = {
 }
 
 
+DAY_NAMES_SHORT = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+
+
+def parse_days(text: str) -> list[int]:
+    """«пн, ср сб» → [0, 2, 5] (0=Пн). Пустой список — ничего не распознано."""
+    days = []
+    for tok in re.split(r"[,\s/]+", (text or "").lower()):
+        tok = tok.strip().rstrip(".")
+        if tok in DAY_ALIASES:
+            days.append(DAY_ALIASES[tok])
+    return sorted(set(days))
+
+
+
 class ProfileMixin:
 
     async def handle_timezone_btn(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -219,15 +233,9 @@ class ProfileMixin:
                 return {}, "Введи LTHR от 100 до 220 (например: 172)"
 
         if awaiting_key == "profile_days":
-            tokens = re.split(r"[,\s]+", text.lower())
-            days = []
-            for tok in tokens:
-                tok = tok.strip().rstrip(".")
-                if tok in DAY_ALIASES:
-                    days.append(DAY_ALIASES[tok])
+            days = parse_days(text)
             if not days:
                 return {}, "Не распознал дни. Напиши, например: пн ср пт сб"
-            days = sorted(set(days))
             return {"available_days": json.dumps(days)}, None
 
         if awaiting_key == "profile_weekday_min":

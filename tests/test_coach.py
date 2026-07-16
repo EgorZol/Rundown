@@ -641,22 +641,50 @@ class TestHrvNightAware(unittest.TestCase):
 
 
 class TestSessions8020(unittest.TestCase):
-    """80/20 по сессиям считает код (инцидент «3 из 3 интенсивные» 15.07)."""
+    """80/20 по сессиям считает код. Два реальных инцидента:
+    15.07 «3 из 3 интенсивные» (владелец) и 16.07 «2 из 3» (Алина) —
+    лёгкие беги с заходами в Z4 на 24-50% времени при низком TE."""
 
-    TODAY = date(2026, 7, 15)
+    TODAY = date(2026, 7, 16)
 
-    def _run(self, day, ate=0.5, **zones):
+    def _run(self, day, te=3.5, ate=0.5, **zones):
         a = {"sport": "running", "start_time": f"2026-07-{day} 07:00",
-             "anaerobic_training_effect": ate}
+             "training_effect": te, "anaerobic_training_effect": ate}
         a.update(zones)
         return a
 
-    def test_real_case_one_intensive_of_three(self):
+    def test_easy_run_with_z4_drift_is_easy(self):
+        # кейс владельца 14-15.07: 24-30% в Z4, TE 3.7/1.3 — лёгкая
+        a = self._run("14", te=3.7, ate=1.3, hrz_1_time="00:00:42",
+                      hrz_2_time="00:05:27", hrz_3_time="00:36:23", hrz_4_time="00:13:35")
+        self.assertFalse(coach.run_is_intensive(a))
+
+    def test_alina_half_z4_low_te_is_easy(self):
+        # кейс Алины 14.07: ровно 50% в Z4, но TE 3.4/0.7 — лёгкая (не >50%)
+        a = self._run("14", te=3.4, ate=0.7,
+                      hrz_3_time="00:30:00", hrz_4_time="00:30:00")
+        self.assertFalse(coach.run_is_intensive(a))
+
+    def test_dominant_z4_is_intensive(self):
+        # кейс владельца 12.07: 83% в Z4 — интенсивная независимо от TE
+        a = self._run("12", te=3.0, ate=1.4, hrz_1_time="00:00:15",
+                      hrz_2_time="00:01:09", hrz_3_time="00:14:04", hrz_4_time="01:14:56")
+        self.assertTrue(coach.run_is_intensive(a))
+
+    def test_high_aerobic_te_is_intensive(self):
+        # темповая: доля Z4 мала (обрезки), но Garmin оценил TE 4.2
+        a = self._run("13", te=4.2, ate=1.0, hrz_3_time="00:40:00", hrz_4_time="00:15:00")
+        self.assertTrue(coach.run_is_intensive(a))
+
+    def test_intervals_by_anaerobic_te(self):
+        # интервалы: анаэробный TE 2.5 при любой картине зон
+        self.assertTrue(coach.run_is_intensive(self._run("13", te=3.5, ate=2.5)))
+
+    def test_owner_real_week(self):
         acts = [
-            self._run("09", ate=0.2),
-            self._run("12", ate=1.4, hrz_1_time="00:10:00", hrz_2_time="00:20:00",
-                      hrz_3_time="00:30:00", hrz_4_time="00:25:00", hrz_5_time="00:05:00"),
-            self._run("14", ate=1.3),
+            self._run("12", te=5.0, ate=1.4, hrz_3_time="00:14:04", hrz_4_time="01:14:56"),
+            self._run("14", te=3.7, ate=1.3, hrz_3_time="00:36:23", hrz_4_time="00:13:35"),
+            self._run("15", te=3.7, ate=0.2, hrz_3_time="00:25:58", hrz_4_time="00:13:46"),
             {"sport": "lap_swimming", "start_time": "2026-07-11 07:00"},
         ]
         line = coach.sessions_7d_line(acts, self.TODAY)
@@ -664,14 +692,8 @@ class TestSessions8020(unittest.TestCase):
         self.assertIn("ok", line)
 
     def test_two_of_three_violates(self):
-        acts = [self._run("09", ate=2.5), self._run("12", ate=3.0), self._run("14", ate=0.3)]
+        acts = [self._run("12", ate=2.5), self._run("14", te=4.5), self._run("15", te=3.0, ate=0.3)]
         self.assertIn("нарушен", coach.sessions_7d_line(acts, self.TODAY))
 
     def test_no_runs_empty(self):
         self.assertEqual(coach.sessions_7d_line([], self.TODAY), "")
-
-    def test_zones_beat_te(self):
-        # зоны говорят «легко» (всё в Z1-Z3) — TE игнорируется
-        a = self._run("14", ate=3.0, hrz_1_time="00:10:00", hrz_2_time="00:30:00",
-                      hrz_3_time="00:20:00", hrz_4_time="00:02:00")
-        self.assertFalse(coach.run_is_intensive(a))

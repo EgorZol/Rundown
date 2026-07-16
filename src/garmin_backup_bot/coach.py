@@ -49,9 +49,13 @@ TE_DEVELOPING = 3.0              # 3-4 = развитие
 TL_HEAVY = 100                   # Training Load >100 = тяжёлая нагрузка
 WALK_PCT_PAUSE = 8               # >8% времени в паузах — пометка усталости
 
-# Классификация сессии для 80/20 по сессиям (утренний бриф):
-# интенсивная = доля Z4+Z5 от HR-времени выше порога; без зон — по анаэробному TE
-INTENSIVE_Z45_TIME_SHARE = 0.20
+# Классификация сессии для 80/20 по сессиям (утренний бриф).
+# Инцидент 16.07: порог «Z4+Z5 >20%» записал лёгкие беги владельца (заходы в Z4
+# на 24–30% времени при TE 3.7/1.3) в интенсивные. Правило: интенсивная — если
+# Z4+Z5 ДОМИНИРУЮТ по времени, ЛИБО сам Garmin оценил нагрузку как высокую
+# (аэробный TE ≥ 4 = темповая/тяжёлая, анаэробный TE ≥ 2 = интервалы/спринты).
+INTENSIVE_Z45_TIME_SHARE = 0.50
+INTENSIVE_AEROBIC_TE = 4.0
 INTENSIVE_ANAEROBIC_TE = 2.0
 SESSIONS_INTENSIVE_MAX_SHARE = 0.34   # >1/3 сессий интенсивные = нарушение 80/20
 
@@ -1348,10 +1352,13 @@ def day_activities_marker(activities: list[dict]) -> str | None:
 
 
 def run_is_intensive(activity: dict) -> bool:
-    """Интенсивная ли беговая сессия: доля Z4+Z5 > порога; без зон — по анаэробному TE."""
+    """Интенсивная ли беговая сессия: Z4+Z5 доминируют ИЛИ высокий TE по Garmin."""
     zs = garmin_zone_secs(activity)
-    if zs and sum(zs) > 0:
-        return (zs[3] + zs[4]) / sum(zs) > INTENSIVE_Z45_TIME_SHARE
+    if zs and sum(zs) > 0 and (zs[3] + zs[4]) / sum(zs) > INTENSIVE_Z45_TIME_SHARE:
+        return True
+    te = activity.get("training_effect")
+    if isinstance(te, (int, float)) and te >= INTENSIVE_AEROBIC_TE:
+        return True
     ate = activity.get("anaerobic_training_effect")
     return isinstance(ate, (int, float)) and ate >= INTENSIVE_ANAEROBIC_TE
 

@@ -434,6 +434,21 @@ def build_tool_schemas(
                 "required": ["timezone"],
             },
         })
+    if write_tools and "set_available_days" in write_tools:
+        tools.append({
+            "name": "set_available_days",
+            "description": (
+                "Сохрани ДНИ НЕДЕЛИ, когда атлет может бегать (структурное поле профиля — "
+                "план строится по нему). «Бегаю вт чт сб», «теперь могу по будням», ответ на "
+                "вопрос о доступных днях — вызывай СРАЗУ, в заметки такое писать НЕЛЬЗЯ."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"days": {"type": "string",
+                    "description": "дни через пробел/запятую: пн вт ср чт пт сб вс"}},
+                "required": ["days"],
+            },
+        })
     if write_tools and "set_experience" in write_tools:
         tools.append({
             "name": "set_experience",

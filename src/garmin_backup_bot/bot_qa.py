@@ -527,6 +527,17 @@ class QAMixin:
             tool_actions.append({"kind": "profile_set", "field": "стаж", "value": f"{years:g} лет"})
             return f"OK: беговой стаж {years:g} лет сохранён"
 
+        def _set_available_days_fn(days: str) -> str:
+            from .bot_profile import DAY_NAMES_SHORT, parse_days
+            import json as _json
+            parsed = parse_days(days or "")
+            if not parsed:
+                return "[ошибка: не распознал дни. Формат: «пн ср сб»]"
+            self._storage.save_profile_override(user_id, available_days=_json.dumps(parsed))
+            human = ", ".join(DAY_NAMES_SHORT[d] for d in parsed)
+            tool_actions.append({"kind": "profile_set", "field": "дни бега", "value": human})
+            return f"OK: дни бега сохранены в профиль — {human}. План будет строиться по ним"
+
         # ── «Слова = кнопка»: запуск того же хендлера, что и кнопка ──
         _ACTION_HANDLERS = {
             "morning": self.handle_morning,
@@ -569,6 +580,7 @@ class QAMixin:
             "set_lthr": _set_lthr_fn,
             "set_timezone": _set_timezone_fn,
             "set_experience": _set_experience_fn,
+            "set_available_days": _set_available_days_fn,
             "invoke_action": _invoke_action_fn,
         }
 
