@@ -304,28 +304,8 @@ class HealthAnalyst(FormattingMixin):
                     hr_str = f"  пульс {s['avg_hr']}" if s.get("avg_hr") else ""
                     cad_str = f"  каденс {s['avg_cadence']}" if s.get("avg_cadence") else ""
                     lines.append(f"     км {s['km']}: темп {s['pace']}{hr_str}{cad_str}")
-                # Cardiac drift: compare avg HR of first third vs last third of run
-                # Skip first km (HR still rising) and last km (may include cooldown)
-                if len(km_splits) >= 5:
-                    body = km_splits[1:-1]  # exclude warmup km and final km
-                    n = len(body)
-                    first_hrs = [s["avg_hr"] for s in body[:n // 3] if s.get("avg_hr")]
-                    last_hrs = [s["avg_hr"] for s in body[n * 2 // 3:] if s.get("avg_hr")]
-                    if first_hrs and last_hrs:
-                        drift = (sum(last_hrs) / len(last_hrs)) - (sum(first_hrs) / len(first_hrs))
-                        drift_pct = drift / (sum(first_hrs) / len(first_hrs)) * 100
-                        # Use API weather temp if available, device sensor as fallback (ignore 127.0)
-                        _eff_temp = w_temp if w_temp is not None else (avg_temp if avg_temp != 127.0 else None)
-                        if drift_pct > 5:
-                            if _eff_temp is not None and _eff_temp > 27:
-                                drift_flag = " ⚠️ >5% — скорее жара (темп >27°C)"
-                            elif _eff_temp is not None and _eff_temp < 20:
-                                drift_flag = " ⚠️ >5% — недовосстановление (не жара, темп <20°C)"
-                            else:
-                                drift_flag = " ⚠️ >5% — недовосстановление или жара"
-                        else:
-                            drift_flag = ""
-                        lines.append(f"   Cardiac drift: {drift_pct:+.1f}%{drift_flag}")
+                # Cardiac drift здесь НЕ считаем (ревью: два разных значения в одном
+                # контексте) — единственный источник: cardiac_drift_pct в WORKOUT FACTS
             parts.append("\n".join(lines))
 
         # Calendar week summary — prevents Claude from using rolling 7d instead of Mon–today
@@ -1328,8 +1308,14 @@ class HealthAnalyst(FormattingMixin):
 
         tool_call_count = 0
         last_exc: Exception | None = None
+        # Ревью: фолбэк на другую модель начинал диалог ЗАНОВО — уже выполненные
+        # write-tools (confirm_fact, add_race...) выполнялись повторно (двойные
+        # записи). Если хоть один write-tool отработал — фолбэк запрещён.
+        wrote_something = False
 
         for model in self._models:
+            if wrote_something:
+                break
             messages = list(base_messages)  # fresh copy per model
             try:
                 while True:
@@ -1359,7 +1345,11 @@ class HealthAnalyst(FormattingMixin):
                             ]
                             partial_text = "\n".join(p for p in partial if p).strip()
                             if partial_text:
-                                return partial_text
+                                # Ревью: преамбула могла обещать шаги, которые не выполнены
+                                return (partial_text
+                                        + "\n\n⚠️ Я упёрся в лимит шагов — что-то из "
+                                          "обещанного выше мог не успеть. Спроси ещё раз, "
+                                          "если чего-то не хватает.")
                             return (
                                 "Я сделал много запросов к данным, но не успел собрать ответ "
                                 "за 8 итераций. Попробуй переформулировать вопрос точнее "
@@ -1371,6 +1361,8 @@ class HealthAnalyst(FormattingMixin):
                         tool_results = []
                         for block in response.content:
                             if getattr(block, "type", "") == "tool_use":
+                                if block.name in (write_tools or {}) or block.name == "save_weekly_plan":
+                                    wrote_something = True
                                 if block.name == "save_weekly_plan" and save_plan_fn is not None:
                                     plan_text = (block.input or {}).get("plan_text", "")
                                     week_type = (block.input or {}).get("week_type", "build")

@@ -70,9 +70,16 @@ def make_sql_runner(db_paths: dict[str, str], user_id: int | None) -> Callable[[
         try:
             conn = _build_app_view(db_path, user_id) if db_key == "app" else _open_ro(db_path)
             conn.row_factory = _sqlite3.Row
-            rows = conn.execute(sql, []).fetchmany(200)
-            result = [dict(r) for r in rows]
-            return str(result) if result else "[]"
+            rows = conn.execute(sql, []).fetchmany(201)
+            truncated = len(rows) > 200
+            result = [dict(r) for r in rows[:200]]
+            if not result:
+                return "[]"
+            out = str(result)
+            if truncated:
+                # Ревью: молчаливая обрезка выглядела как полный результат
+                out += "\n[⚠️ ОБРЕЗАНО: показаны первые 200 строк — сузь запрос или агрегируй]"
+            return out
         except Exception as e:
             logger.warning("Tool SQL failed (db=%s): %s", db_key, e)
             return "[ошибка: запрос не выполнен — проверь синтаксис и имена колонок]"

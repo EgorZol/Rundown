@@ -104,6 +104,8 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
         # Timezone used by garmindb when storing naive datetimes (defaults to user_timezone)
         self._garmin_db_tz = ZoneInfo(garmin_db_timezone or user_timezone)
         self._sync_locks: dict[int, asyncio.Lock] = {}
+        # Атомарный busy-флаг синка (TOCTOU-фикс ревью): ставится до первого await
+        self._busy_users: set[int] = set()
         # Лимит параллельных Garmin-синков по всему боту.
         # После миграции на Garth (I/O-bound, 5-10 сек) серверная нагрузка низкая,
         # ограничение нужно только чтобы не упереться в Garmin rate-limit с одного IP.

@@ -164,11 +164,18 @@ class ReportsMixin:
             return
 
         lock = self._get_sync_lock(user_id)
-        if lock.locked():
+        # Ревью (TOCTOU): между проверкой и захватом были await'ы — двойной тап
+        # давал два синка и два LLM-прогона. Sync-флаг ставится до первого await
+        # (event loop однопоточный → атомарно), снимается в finally хендлера.
+        busy = getattr(self, "_busy_users", None)
+        if busy is None:
+            busy = self._busy_users = set()
+        if user_id in busy or lock.locked():
             await update.message.reply_text(
                 "Уже идёт синхронизация, подожди немного...", reply_markup=MAIN_KEYBOARD
             )
             return
+        busy.add(user_id)
 
         status_msg = await update.message.reply_text("Синхронизирую данные с Garmin...")
         stop = asyncio.Event()
@@ -300,6 +307,7 @@ class ReportsMixin:
                 morning_facts=morning_facts,
             )
         finally:
+            self._busy_users.discard(user_id)
             stop.set()
             with contextlib.suppress(Exception):
                 await spinner
@@ -346,11 +354,18 @@ class ReportsMixin:
             return
 
         lock = self._get_sync_lock(user_id)
-        if lock.locked():
+        # Ревью (TOCTOU): между проверкой и захватом были await'ы — двойной тап
+        # давал два синка и два LLM-прогона. Sync-флаг ставится до первого await
+        # (event loop однопоточный → атомарно), снимается в finally хендлера.
+        busy = getattr(self, "_busy_users", None)
+        if busy is None:
+            busy = self._busy_users = set()
+        if user_id in busy or lock.locked():
             await update.message.reply_text(
                 "Уже идёт синхронизация, подожди немного...", reply_markup=MAIN_KEYBOARD
             )
             return
+        busy.add(user_id)
 
         status_msg = await update.message.reply_text("Синхронизирую тренировки...")
         stop = asyncio.Event()
@@ -459,6 +474,7 @@ class ReportsMixin:
                 today_iso=today.isoformat(),
             )
         finally:
+            self._busy_users.discard(user_id)
             stop.set()
             with contextlib.suppress(Exception):
                 await spinner
@@ -520,12 +536,19 @@ class ReportsMixin:
         ]))
 
         lock = self._get_sync_lock(user_id)
-        if lock.locked():
+        # Ревью (TOCTOU): между проверкой и захватом были await'ы — двойной тап
+        # давал два синка и два LLM-прогона. Sync-флаг ставится до первого await
+        # (event loop однопоточный → атомарно), снимается в finally хендлера.
+        busy = getattr(self, "_busy_users", None)
+        if busy is None:
+            busy = self._busy_users = set()
+        if user_id in busy or lock.locked():
             stop.set()
             with contextlib.suppress(Exception):
                 await spinner
             await status_msg.edit_text("Уже идёт синхронизация, подожди немного…")
             return
+        busy.add(user_id)
 
         metrics = None
         try:
@@ -582,6 +605,7 @@ class ReportsMixin:
             logger.exception("Error generating plan")
             plan_text = _api_error_msg(exc, "составление плана")
         finally:
+            self._busy_users.discard(user_id)
             stop.set()
             with contextlib.suppress(Exception):
                 await spinner
@@ -687,6 +711,7 @@ class ReportsMixin:
             logger.exception("Error generating sport status")
             report = _api_error_msg(exc, "спортивный статус")
         finally:
+            self._busy_users.discard(user_id)
             stop.set()
             with contextlib.suppress(Exception):
                 await spinner
@@ -764,6 +789,7 @@ class ReportsMixin:
             logger.exception("Error generating progress report")
             report = _api_error_msg(exc, "отчёт о прогрессе")
         finally:
+            self._busy_users.discard(user_id)
             stop.set()
             with contextlib.suppress(Exception):
                 await spinner
@@ -812,31 +838,11 @@ class ReportsMixin:
             plan_text = plan_row[0] if plan_row else ""
 
             if not plan_text:
-                try:
-                    history = self._storage.get_history(user_id, limit=10)
-                    user_memory_for_plan = self._storage.get_user_memory(user_id)
-                    training_goal = self._storage.get_goal(user_id)
-                    upcoming_races = self._storage.get_races(user_id, from_date=today.isoformat())
-                    from datetime import date as _date
-                    feelings_since = (_date.today() - timedelta(days=6)).isoformat()
-                    recent_feelings = self._storage.get_feelings(user_id, feelings_since)
-                    plan_text, week_type = await self._plan_builder.generate_plan(
-                        user_id=user_id,
-                        metrics=metrics,
-                        history=history,
-                        user_memory=user_memory_for_plan,
-                        training_goal=training_goal,
-                        upcoming_races=upcoming_races,
-                        feelings=recent_feelings,
-                    )
-                    from . import coach as _coach
-                    plan_text, n_fixes = _coach.fix_plan_dates(plan_text, date.fromisoformat(week_start))
-                    if n_fixes:
-                        logger.warning("weekly_summary: исправлено %d дат в сгенерированном плане", n_fixes)
-                    self._storage.save_plan(user_id, week_start, plan_text, week_type)
-                except Exception as exc:
-                    logger.warning("Could not auto-generate plan for weekly summary: %s", exc)
-                    plan_text = ""
+                # Ревью: здесь авто-генерился план ЗАДНИМ ЧИСЛОМ для уже прожитой
+                # недели (без week_start, по сегодняшним данным) и сохранялся в
+                # weekly_plans — сравнение «план vs факт» с фантомом. Честнее:
+                # плана не было — так и говорим.
+                plan_text = ""
 
             feelings_stats = self._storage.get_feelings_stats(user_id, days=7)
             user_memory = self._storage.get_user_memory(user_id)

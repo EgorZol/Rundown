@@ -313,17 +313,22 @@ class GarminSyncMixin:
         и активити-синк через минуту считал себя инкрементальным → качал
         14 дней вместо годовой истории активностей.
         """
-        db_name, table = (
-            ("garmin.db", "sleep") if domain == "health"
-            else ("garmin_activities.db", "activities")
+        # Ревью: health судился ТОЛЬКО по sleep — юзер, чьи часы не пишут сон
+        # (не носит ночью), вечно считался «первичным» и качал 365 дней
+        db_name, tables = (
+            ("garmin.db", ("sleep", "daily_summary")) if domain == "health"
+            else ("garmin_activities.db", ("activities",))
         )
         path = self._workdir_root / str(user_id) / "DBs" / db_name
         if not path.exists():
             return True
         try:
             with sqlite3.connect(path, timeout=5) as conn:
-                row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
-                return not (row and row[0] > 0)
+                for table in tables:
+                    row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+                    if row and row[0] > 0:
+                        return False
+                return True
         except Exception:
             return True
 
@@ -862,8 +867,10 @@ class GarminSyncMixin:
                         """,
                         (
                             str(activity_id), lap_id,
-                            lap.get("startTimeGMT"),
-                            lap.get("startTimeGMT"),
+                            # Ревью: было GMT в обеих колонках при активностях
+                            # в локальном времени — сдвиг на часовой пояс
+                            lap.get("startTimeLocal") or lap.get("startTimeGMT"),
+                            lap.get("startTimeLocal") or lap.get("startTimeGMT"),
                             self._secs_to_time_str(lap.get("duration")) or "00:00:00",
                             self._secs_to_time_str(lap.get("movingDuration")) or "00:00:00",
                             lap_dist_km,

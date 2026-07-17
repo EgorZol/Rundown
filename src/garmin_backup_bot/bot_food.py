@@ -186,10 +186,44 @@ class FoodMixin:
             )
             return
 
+        _saved = self._autosave_displaced_pending(user_id, context)
+        if _saved:
+            await update.message.reply_text(f"💾 Предыдущее ({_saved[:40]}) сохранил автоматически.")
         context.user_data["pending_food"] = result
         context.user_data["pending_food_source"] = "photo"
         text = NutritionAnalyzer.format_food_confirmation(result)
         await update.message.reply_text(text, reply_markup=FOOD_CONFIRM_KB)
+
+    def _autosave_displaced_pending(self, user_id: int, context) -> str | None:
+        """Ревью: серия фото/сообщений перезатирала pending_food — приём терялся.
+
+        Перед перезаписью молча сохраняем прежнее распознавание в БД.
+        Возвращает описание сохранённого (для пометки в ответе) или None.
+        """
+        pending = context.user_data.get("pending_food")
+        if not pending or not pending.get("description"):
+            return None
+        source = context.user_data.get("pending_food_source", "text")
+        tz = self._get_user_tz(user_id)
+        now = datetime.now(tz)
+        try:
+            self._storage.save_food_entry(
+                user_id=user_id,
+                entry_date=pending.get("entry_date") or now.date().isoformat(),
+                entry_time=now.strftime("%H:%M"),
+                description=pending["description"],
+                calories=pending["calories"],
+                protein_g=pending["protein_g"],
+                fat_g=pending["fat_g"],
+                carbs_g=pending["carbs_g"],
+                confidence=pending.get("confidence", "medium"),
+                source=source,
+                raw_response=pending.get("raw_response", ""),
+            )
+        except Exception:
+            logger.exception("autosave pending_food failed")
+            return None
+        return pending.get("description")
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._gate(update, "any"):
@@ -239,7 +273,13 @@ class FoodMixin:
                 return
             status_msg2 = await update.message.reply_text("🍽 Оцениваю калории...")
             try:
-                result = await self._nutrition.analyze_text(food_text)
+                _pending = context.user_data.get("pending_food")
+                if awaiting == "food_edit" and _pending:
+                    # Ревью: голосовая правка создавала НОВОЕ блюдо вместо коррекции
+                    result = await self._nutrition.analyze_correction(_pending, food_text)
+                    context.user_data["awaiting"] = "food"
+                else:
+                    result = await self._nutrition.analyze_text(food_text)
             except NutritionTruncatedError as exc:
                 logger.warning("Food text truncated: %s", exc)
                 with contextlib.suppress(Exception):
@@ -269,6 +309,10 @@ class FoodMixin:
 
             if date_iso:
                 result["entry_date"] = date_iso
+            if context.user_data.get("awaiting") != "food_edit":
+                _saved = self._autosave_displaced_pending(update.effective_user.id, context)
+                if _saved:
+                    await update.message.reply_text(f"💾 Предыдущее ({_saved[:40]}) сохранил автоматически.")
             context.user_data["pending_food"] = result
             context.user_data["pending_food_source"] = "voice"
             confirmation = NutritionAnalyzer.format_food_confirmation(result)

@@ -237,6 +237,14 @@ class QAMixin:
 
         # Profile questionnaire flow
         if awaiting and awaiting.startswith("profile_"):
+            # Ревью: из анкеты нельзя было выйти — юзер заперт в вопросе
+            if question.lower().strip(" .!") in ("стоп", "отмена", "выход", "хватит", "потом", "stop", "cancel"):
+                context.user_data.pop("profile_step", None)
+                await update.message.reply_text(
+                    "Ок, анкету отложили — продолжить можно в любой момент через 📋 Профиль.",
+                    reply_markup=MAIN_KEYBOARD,
+                )
+                return
             context.user_data.pop("profile_step", None)
             skipped = _is_skip_token(question)
             if skipped:
@@ -328,6 +336,11 @@ class QAMixin:
             sources=("qa", "plan_tweak", "morning", "workout"),
             recent_full=10,  # старшие 10 сообщений — только заголовки (экономия ~1k ток/вызов)
         )
+        # Ревью: вопрос пишем в историю ДО tool-цикла — иначе invoke_action
+        # (план/утро пишут свои сообщения внутри цикла) инвертировал хронологию:
+        # ответ оказывался в истории раньше вопроса. history уже прочитана выше,
+        # так что в текущий контекст вопрос не задвоится.
+        self._storage.add_message(user_id, "user", question, source="qa")
         user_memory = self._storage.get_user_memory(user_id)
         training_goal = self._storage.get_goal(user_id)
         # Включаем прошедшие старты за 21 день — чтобы Claude видел недавние
@@ -468,7 +481,10 @@ class QAMixin:
             self._storage.save_goal(user_id, goal_text)
             # Сбросить план на текущую неделю чтобы он пересчитался под новую цель.
             today_d = datetime.now(self._get_user_tz(user_id)).date()
-            week_start_iso = (today_d - timedelta(days=today_d.weekday())).isoformat()
+            # Ревью: в воскресенье кэш плана живёт под СЛЕДУЮЩЕЙ неделей —
+            # сбрасываем целевую неделю плана, а не календарную текущую
+            from . import coach as _coach_ws
+            week_start_iso = _coach_ws.plan_week_start(today_d).isoformat()
             self._storage.clear_plan(user_id, week_start_iso)
             # Авто-извлечение дат → A-гонки (как делает /goal). Не блокирует —
             # если парсер цели сломан, цель всё равно сохранена.
@@ -590,6 +606,18 @@ class QAMixin:
         # активности за 8 дней (хватает на текущую неделю + вчерашний день)
         qa_week_acts = await asyncio.to_thread(self._service.collect_recent_activities, user_id, days=8)
         qa_week_start = today - timedelta(days=today.weekday())
+        # Ревью: QA-контекст не производил план-маркеры вовсе — модель искала
+        # [ПЛАН НА СЕГОДНЯ] и, не находя, реконструировала план из истории.
+        if metrics is not None:
+            _pm = await asyncio.to_thread(
+                self._storage.get_plan_meta, user_id, qa_week_start.isoformat())
+            if _pm:
+                metrics["plan_week_type"] = _pm.get("week_type") or ""
+                metrics["plan_today_line"] = _coach.plan_line_for_date(_pm["plan_text"], today)
+                metrics["plan_tomorrow_line"] = _coach.plan_line_for_date(
+                    _pm["plan_text"], today + timedelta(days=1))
+            else:
+                metrics["plan_missing"] = True
         qa_week_facts = _coach.compute_week_facts(
             activities=qa_week_acts,
             week_start=qa_week_start,
@@ -686,5 +714,4 @@ class QAMixin:
                 await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
 
         # Save to conversation history
-        self._storage.add_message(user_id, "user", question, source="qa")
         self._storage.add_message(user_id, "assistant", answer_clean, source="qa")

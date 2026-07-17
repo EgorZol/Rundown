@@ -922,20 +922,11 @@ class FormattingMixin:
         run_7d = [a for a in activities if a.get("sport") in RUN_SPORTS
                   and a.get("start_time", "") >= d7_start.isoformat()]
         if len(run_7d) >= 2:
-            easy_s = 0
-            for a in run_7d:
-                gsecs = self._garmin_zone_secs(a)
-                if gsecs:
-                    total_s = sum(gsecs)
-                    z123_s = gsecs[0] + gsecs[1] + gsecs[2]  # Z1-Z3 = aerobic in Garmin
-                    is_easy = total_s > 0 and z123_s / total_s >= 0.80
-                else:
-                    z123 = sum(self._time_str_to_secs(a.get(f"hrz_{i}_time")) for i in range(1, 4))
-                    total = self._time_str_to_secs(a.get("moving_time"))
-                    is_easy = total > 0 and z123 / total >= 0.80
-                if is_easy:
-                    easy_s += 1
-            hard_s = len(run_7d) - easy_s
+            # Ревью: здесь был ТРЕТИЙ вариант классификации сессий — противоречил
+            # sessions_7d в MORNING FACTS. Единственный классификатор — coach.
+            from . import coach as _coach_cls
+            hard_s = sum(1 for a in run_7d if _coach_cls.run_is_intensive(a))
+            easy_s = len(run_7d) - hard_s
             lines.append(
                 f"  80/20 по сессиям (7д): {easy_s} лёгких / {hard_s} интенсивных из {len(run_7d)}"
             )
