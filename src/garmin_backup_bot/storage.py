@@ -395,6 +395,14 @@ class Storage:
                 (user_id, plan, amount, currency, telegram_charge_id, provider_charge_id, now_iso),
             )
 
+    def payment_exists(self, telegram_charge_id: str) -> bool:
+        """Идемпотентность оплаты: платёж с этим charge_id уже зачислен?"""
+        with self._connect() as conn:
+            return conn.execute(
+                "SELECT 1 FROM payments WHERE telegram_charge_id = ? LIMIT 1",
+                (telegram_charge_id,),
+            ).fetchone() is not None
+
     def log_nudge(self, user_id: int, gap_key: str) -> None:
         """Зафиксировать показ подсказки о пробеле в данных."""
         now_iso = datetime.now(timezone.utc).isoformat()

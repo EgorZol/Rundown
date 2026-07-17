@@ -282,6 +282,9 @@ class FoodMixin:
             await self.handle_question(update, context)
 
     async def handle_food_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        # Гейт и на коллбеки: обход пейволла через старые inline-клавиатуры (ревью)
+        if not await self._gate(update, "any"):
+            return
         """Handle inline keyboard callbacks for food confirmation."""
         query = update.callback_query
         await query.answer()
@@ -446,6 +449,9 @@ class FoodMixin:
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Управление записями еды: правка/удаление из отчёта."""
+        # Гейт и на коллбеки: обход пейволла через старые inline-клавиатуры (ревью)
+        if not await self._gate(update, "any"):
+            return
         from datetime import date as _date
 
         query = update.callback_query

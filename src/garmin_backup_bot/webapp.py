@@ -29,10 +29,12 @@ _rate_lock = Lock()
 
 
 def _client_ip(request: Request) -> str:
-    # За nginx реальный IP — в X-Forwarded-For (первый элемент).
+    # Ревью: ПЕРВЫЙ элемент X-Forwarded-For подделывается клиентом (он может
+    # прислать свой заголовок, nginx лишь дописывает реальный IP в конец).
+    # Берём ПОСЛЕДНИЙ — его добавил наш прокси.
     xff = request.headers.get("x-forwarded-for")
     if xff:
-        return xff.split(",")[0].strip()
+        return xff.split(",")[-1].strip()
     return request.client.host if request.client else "unknown"
 
 
@@ -40,6 +42,10 @@ def _check_rate(request: Request) -> None:
     ip = _client_ip(request)
     now = time.monotonic()
     with _rate_lock:
+        # Прунинг мёртвых ключей — словарь не растёт бесконечно (ревью)
+        if len(_rate_hits) > 500:
+            for k in [k for k, q in _rate_hits.items() if not q or q[-1] < now - _RATE_WINDOW]:
+                _rate_hits.pop(k, None)
         dq = _rate_hits.setdefault(ip, deque())
         while dq and dq[0] < now - _RATE_WINDOW:
             dq.popleft()
@@ -186,7 +192,7 @@ def connect(request: Request, token: str = Query(..., min_length=8, max_length=1
         statusEl.textContent = data.message || 'Не получилось сохранить. Попробуй ещё раз.';
         return;
       }}
-      statusEl.textContent = '✅ Готово! Вернись в Telegram и нажми кнопку 🌅 Утро — бот загрузит данные за последние дни.';
+      statusEl.textContent = '✅ Готово! Вернись в Telegram — я уже начал загружать твою историю, напишу как закончу.';
     }} catch (err) {{
       statusEl.textContent = 'Ошибка сети. Проверь интернет и попробуй ещё раз.';
     }}

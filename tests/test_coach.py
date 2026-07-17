@@ -791,3 +791,17 @@ class TestPlanDayRegexFullDates(unittest.TestCase):
         m = coach._PLAN_DAY_RE.search("Пн 06.07: бег")
         self.assertIsNotNone(m)
         self.assertEqual(m.group(3), "07")
+
+
+class TestSubscriptionDurations(unittest.TestCase):
+    """Ревью: «30 дней» было 31 (paid_until включительно). Инвариант длительности."""
+
+    def test_thirty_days_inclusive_math(self):
+        from datetime import timedelta
+        today = date(2026, 7, 17)
+        until = today + timedelta(days=30 - 1)
+        # today..until включительно = ровно 30 дней
+        self.assertEqual((until - today).days + 1, 30)
+        sub = {"plan": "coach", "paid_until": until.isoformat()}
+        self.assertEqual(coach.access_level(sub, until), "coach")           # последний день — доступ есть
+        self.assertEqual(coach.access_level(sub, until + timedelta(days=1)), "none")  # 31-й — нет

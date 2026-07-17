@@ -63,7 +63,7 @@ class PaymentsMixin:
         today = datetime.now(self._tz).date()
         sub = self._storage.get_subscription(user_id)
         if sub is None:
-            until = (today + timedelta(days=_coach.TRIAL_DAYS)).isoformat()
+            until = (today + timedelta(days=_coach.TRIAL_DAYS - 1)).isoformat()
             self._storage.upsert_subscription(user_id, _coach.PLAN_TRIAL, until)
             with_logging_suppress = update.effective_message
             if with_logging_suppress:
@@ -139,23 +139,40 @@ class PaymentsMixin:
     async def handle_successful_payment(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user_id = update.effective_user.id
         sp = update.effective_message.successful_payment
+        # Идемпотентность (ревью): Telegram может доставить апдейт повторно —
+        # без этого повторная доставка продлевала подписку дважды.
+        charge_id = sp.telegram_payment_charge_id
+        if charge_id and self._storage.payment_exists(charge_id):
+            logger.warning("payment duplicate delivery: user=%s charge=%s", user_id, charge_id)
+            await update.effective_message.reply_text(
+                "Этот платёж уже зачислен ✅", reply_markup=MAIN_KEYBOARD)
+            return
         plan = (sp.invoice_payload or "").split(":", 1)[-1]
         if plan not in PLAN_PRICES:
             logger.error("successful_payment с неизвестным payload=%r от %s", sp.invoice_payload, user_id)
             plan = _coach.PLAN_COACH
         today = datetime.now(self._tz).date()
-        # Продление: от конца текущего оплаченного периода, если он ещё идёт
-        # (но триал не продлеваем — платный срок стартует сегодня).
+        # Продление: paid_until — ПОСЛЕДНИЙ оплаченный день (включительно),
+        # поэтому база продления = paid_until + 1 день, и «30 дней» = ровно 30
+        # (ревью: было base+30 → 31 день).
         sub = self._storage.get_subscription(user_id)
         base = today
-        if sub and sub.get("paid_until") and sub.get("plan") == plan:
+        credit_days = 0
+        if sub and sub.get("paid_until"):
             try:
                 from datetime import date as _date
                 cur = _date.fromisoformat(str(sub["paid_until"])[:10])
-                base = max(today, cur)
+                if sub.get("plan") == plan and cur >= today:
+                    base = cur + timedelta(days=1)
+                elif (sub.get("plan") in PLAN_PRICES and sub.get("plan") != plan
+                      and cur >= today):
+                    # Смена тарифа: неиспользованный остаток конвертируется по
+                    # деньгам (ревью: раньше остаток молча сгорал)
+                    remaining = (cur - today).days + 1
+                    credit_days = remaining * PLAN_PRICES[sub["plan"]] // PLAN_PRICES[plan]
             except ValueError:
                 pass
-        until = (base + timedelta(days=SUB_PERIOD_DAYS)).isoformat()
+        until = (base + timedelta(days=SUB_PERIOD_DAYS - 1 + credit_days)).isoformat()
         self._storage.upsert_subscription(user_id, plan, until)
         self._storage.record_payment(
             user_id, plan, sp.total_amount, sp.currency,
@@ -163,8 +180,9 @@ class PaymentsMixin:
         )
         logger.info("payment ok: user=%s plan=%s amount=%s until=%s",
                     user_id, plan, sp.total_amount, until)
+        credit_note = (f"\nОстаток прошлого тарифа зачтён: +{credit_days} дн." if credit_days else "")
         await update.effective_message.reply_text(
-            f"✅ Оплата прошла! {PLAN_TITLES[plan]} активен до {until}.\n"
+            f"✅ Оплата прошла! {PLAN_TITLES[plan]} активен до {until}.{credit_note}\n"
             "Чек придёт от ЮKassa. Спасибо, побежали! 🏃",
             reply_markup=MAIN_KEYBOARD,
         )
