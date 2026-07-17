@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -636,27 +637,95 @@ def compute_workout_facts(
     )
 
 
+def _morning_inputs(metrics: dict) -> dict:
+    """Нормализует РЕАЛЬНЫЕ ключи collect_daily_metrics к тому, что ждут пороги.
+
+    Инцидент ревью 16.07: recovery читал total_sleep_secs / resting_hr.last /
+    body_battery.min / fitness.acwr — таких ключей пайплайн не производит,
+    и большинство порогов молча не срабатывали НИКОГДА. Реальные формы:
+    sleep.total_sleep="7:35:00", resting_hr.resting_heart_rate, BB в
+    daily_summary.bb_min/bb_max, ACWR выводится из fitness.atl/ctl.
+    Старые ключи оставлены как фолбэк (тесты/будущие формы).
+    """
+    sleep = metrics.get("sleep_last_night") or metrics.get("sleep") or {}
+    ds = metrics.get("daily_summary") or {}
+    rhr_block = metrics.get("resting_hr") or {}
+    fitness = metrics.get("fitness") or {}
+    hrv = metrics.get("hrv") or {}
+
+    def sleep_h(key: str) -> float | None:
+        v = sleep.get(f"{key}_secs")
+        if v is None:
+            v = sleep.get(key)
+        return _hours_from_minutes(v)
+
+    rhr = rhr_block.get("last")
+    if rhr is None:
+        rhr = rhr_block.get("resting_heart_rate")
+    rhr_baseline = (
+        rhr_median_baseline(metrics.get("rhr_trend_7d") or [])
+        or rhr_median_baseline(metrics.get("daily_trend_7d") or [])
+        or rhr_block.get("avg_7d") or rhr_block.get("baseline")
+    )
+
+    bb_block = metrics.get("body_battery") or {}
+    bb_min = bb_block.get("min") or bb_block.get("min_24h") or ds.get("bb_min")
+    bb_max = bb_block.get("max") or bb_block.get("max_24h") or ds.get("bb_max")
+
+    avg_rr = sleep.get("avg_rr")
+    if not isinstance(avg_rr, (int, float)):
+        avg_rr = metrics.get("avg_rr") if isinstance(metrics.get("avg_rr"), (int, float)) else None
+    avg_rr_base = metrics.get("avg_rr_baseline_7d") or sleep.get("avg_rr_baseline_7d")
+    if avg_rr_base is None:
+        today_day = sleep.get("day")
+        vals = [t.get("avg_rr") for t in (metrics.get("sleep_trend_7d") or [])
+                if isinstance(t.get("avg_rr"), (int, float)) and t.get("day") != today_day]
+        if len(vals) >= 3:
+            avg_rr_base = sum(vals) / len(vals)
+
+    tsb = fitness.get("tsb") if isinstance(fitness.get("tsb"), (int, float)) else None
+    acwr = fitness.get("acwr")
+    if not isinstance(acwr, (int, float)):
+        atl, ctl = fitness.get("atl"), fitness.get("ctl")
+        acwr = (atl / ctl) if isinstance(atl, (int, float)) and isinstance(ctl, (int, float)) and ctl > 0 else None
+
+    return {
+        "sleep": sleep, "hrv": hrv,
+        "deep_h": sleep_h("deep_sleep"), "rem_h": sleep_h("rem_sleep"),
+        "total_h": sleep_h("total_sleep"),
+        "rhr": rhr, "rhr_baseline": rhr_baseline,
+        "bb_min": bb_min, "bb_max": bb_max,
+        "avg_rr": avg_rr, "avg_rr_base": avg_rr_base,
+        "tsb": tsb, "acwr": acwr,
+    }
+
+
+_SEVERITY = {"good": 0, "caution": 1, "poor": 2, "alarm": 3}
+
+
+def _worsen(label: str, new: str) -> str:
+    """Вердикт может только ухудшаться (инцидент ревью: TSB понижал alarm→poor)."""
+    return new if _SEVERITY[new] > _SEVERITY[label] else label
+
+
 def compute_recovery_status(metrics: dict) -> RecoveryStatus:
     """Применяет пороги к метрикам утра и выдаёт сводный вердикт.
 
-    Логика порядка: alarm > poor > caution > good > no_data.
-    Если ни одного источника данных нет — возвращает no_data, чтобы LLM
-    не давал ложно-успокаивающий вердикт «всё отлично» свежим юзерам.
+    Логика порядка: alarm > poor > caution > good (только ухудшение).
+    Если ни одного источника данных нет — no_data, чтобы LLM не давал
+    ложно-успокаивающий вердикт «всё отлично» свежим юзерам.
     """
     drivers: list[str] = []
     label = "good"
     safe_hard = True
 
-    # Проверяем, есть ли хоть какие-то источники данных. Если все ключевые
-    # поля пустые — это значит «утренняя сводка не подтянулась», не «всё ок».
+    m = _morning_inputs(metrics)
+    feelings = metrics.get("feelings") or []
+
     has_data = any([
-        (metrics.get("sleep_last_night") or metrics.get("sleep")),
-        (metrics.get("resting_hr") or {}).get("last") is not None,
-        (metrics.get("body_battery") or {}).get("min") is not None,
-        (metrics.get("hrv") or {}).get("status"),
-        (metrics.get("fitness") or {}).get("tsb") is not None,
-        (metrics.get("fitness") or {}).get("acwr") is not None,
-        bool(metrics.get("feelings")),
+        m["total_h"] is not None, m["rhr"] is not None, m["bb_min"] is not None,
+        m["hrv"].get("status"), m["tsb"] is not None, m["acwr"] is not None,
+        bool(feelings),
     ])
     if not has_data:
         return RecoveryStatus(
@@ -665,49 +734,34 @@ def compute_recovery_status(metrics: dict) -> RecoveryStatus:
             safe_to_train_hard=False,
         )
 
-    sleep = metrics.get("sleep_last_night") or metrics.get("sleep") or {}
-    deep_h = _hours_from_minutes(sleep.get("deep_sleep_secs"))
-    rem_h = _hours_from_minutes(sleep.get("rem_sleep_secs"))
-    total_h = _hours_from_minutes(sleep.get("total_sleep_secs"))
+    if m["deep_h"] is not None and m["deep_h"] < DEEP_SLEEP_MIN_H:
+        drivers.append(f"deep sleep {m['deep_h']:.1f}ч <норма {DEEP_SLEEP_MIN_H}ч")
+        label = _worsen(label, "caution")
+    if m["rem_h"] is not None and m["rem_h"] < REM_MIN_H:
+        drivers.append(f"REM {m['rem_h']:.1f}ч <норма {REM_MIN_H}ч")
+        label = _worsen(label, "caution")
+    if m["total_h"] is not None and m["total_h"] < SLEEP_TOTAL_MIN_H:
+        drivers.append(f"общий сон {m['total_h']:.1f}ч <{SLEEP_TOTAL_MIN_H}")
+        label = _worsen(label, "caution")
 
-    if deep_h is not None and deep_h < DEEP_SLEEP_MIN_H:
-        drivers.append(f"deep sleep {deep_h:.1f}ч <норма {DEEP_SLEEP_MIN_H}ч")
-        label = "caution"
-    if rem_h is not None and rem_h < REM_MIN_H:
-        drivers.append(f"REM {rem_h:.1f}ч <норма {REM_MIN_H}ч")
-        label = "caution"
-    if total_h is not None and total_h < SLEEP_TOTAL_MIN_H:
-        drivers.append(f"общий сон {total_h:.1f}ч <{SLEEP_TOTAL_MIN_H}")
-        label = "caution"
-
-    rhr = (metrics.get("resting_hr") or {}).get("last")
-    # База RHR — медиана 7д (rhr_median_baseline), как и в overload_verdict;
-    # avg_7d/baseline — фолбэк для метрик без daily_trend_7d
-    rhr_baseline = (rhr_median_baseline(metrics.get("daily_trend_7d") or [])
-                    or (metrics.get("resting_hr") or {}).get("avg_7d")
-                    or (metrics.get("resting_hr") or {}).get("baseline"))
-    if rhr is not None and rhr_baseline:
-        delta = rhr - rhr_baseline
+    if m["rhr"] is not None and m["rhr_baseline"]:
+        delta = m["rhr"] - m["rhr_baseline"]
         if delta >= RHR_SPIKE_BPM:
-            drivers.append(f"RHR {rhr} (+{delta} над базой {rhr_baseline}) — недовосстановление")
-            label = "poor"
+            drivers.append(
+                f"RHR {m['rhr']:.0f} (+{delta:.0f} над базой {m['rhr_baseline']:.0f}) — недовосстановление")
+            label = _worsen(label, "poor")
             safe_hard = False
 
-    bb = metrics.get("body_battery") or {}
-    bb_min = bb.get("min") or bb.get("min_24h")
-    if bb_min is not None and bb_min < BB_LOW:
-        drivers.append(f"Body Battery min {bb_min} (низкий заряд)")
-        if label == "good":
-            label = "caution"
+    if m["bb_min"] is not None and m["bb_min"] < BB_LOW:
+        drivers.append(f"Body Battery min {m['bb_min']} (низкий заряд)")
+        label = _worsen(label, "caution")
 
-    hrv = metrics.get("hrv") or {}
-    hrv_status = hrv.get("status")
+    hrv_status = m["hrv"].get("status")
     if hrv_status and hrv_status.upper() in ("UNBALANCED", "LOW"):
         # Статус Garmin — НЕДЕЛЬНЫЙ тренд. Готовность «на сегодня» судим по
-        # ночному значению против личной базы: ночь в базе → вердикт дня не
-        # роняем (кейс 15.07: ночь 67 в базе 58–81, а бриф пугал «Осторожно»).
-        night = hrv.get("last_night_avg")
-        b_lo, b_up = hrv.get("baseline_balanced_low"), hrv.get("baseline_balanced_upper")
+        # ночному значению против личной базы (кейс 15.07).
+        night = m["hrv"].get("last_night_avg")
+        b_lo, b_up = m["hrv"].get("baseline_balanced_low"), m["hrv"].get("baseline_balanced_upper")
         night_in_base = (
             isinstance(night, (int, float)) and b_lo and b_up and b_lo <= night <= b_up
         )
@@ -719,44 +773,42 @@ def compute_recovery_status(metrics: dict) -> RecoveryStatus:
         else:
             night_str = f"{night:.0f}" if isinstance(night, (int, float)) else "?"
             drivers.append(f"HRV {hrv_status}, ночь {night_str} вне базы {b_lo}–{b_up}")
-            label = "poor" if hrv_status.upper() == "UNBALANCED" else label
-            safe_hard = False if hrv_status.upper() == "UNBALANCED" else safe_hard
-
-    avg_rr = (sleep.get("avg_rr") or (metrics.get("avg_rr") if isinstance(metrics.get("avg_rr"), (int, float)) else None))
-    avg_rr_base = (metrics.get("avg_rr_baseline_7d") or sleep.get("avg_rr_baseline_7d"))
-    if avg_rr is not None and avg_rr_base:
-        rr_delta = avg_rr - avg_rr_base
-        if rr_delta >= RR_SPIKE_BPM:
-            drivers.append(f"avg_rr {avg_rr:.1f} (+{rr_delta:.1f}) — ранний маркер болезни/перегрузки")
-            label = "alarm"
+            label = _worsen(label, "poor")
             safe_hard = False
 
-    # TSB
-    fitness = metrics.get("fitness") or {}
-    tsb = fitness.get("tsb")
-    if isinstance(tsb, (int, float)) and tsb < TSB_BUILDING_LO:
-        drivers.append(f"TSB {tsb:+.0f} (<{TSB_BUILDING_LO} — перегруз)")
-        label = "poor"
+    if m["avg_rr"] is not None and m["avg_rr_base"]:
+        rr_delta = m["avg_rr"] - m["avg_rr_base"]
+        if rr_delta >= RR_SPIKE_BPM:
+            drivers.append(f"avg_rr {m['avg_rr']:.1f} (+{rr_delta:.1f}) — ранний маркер болезни/перегрузки")
+            label = _worsen(label, "alarm")
+            safe_hard = False
+
+    if m["tsb"] is not None and m["tsb"] < TSB_BUILDING_LO:
+        drivers.append(f"TSB {m['tsb']:+.0f} (<{TSB_BUILDING_LO} — перегруз)")
+        label = _worsen(label, "poor")
         safe_hard = False
 
-    acwr_v = fitness.get("acwr")
-    if isinstance(acwr_v, (int, float)) and acwr_v > ACWR_HIGH:
-        drivers.append(f"ACWR {acwr_v:.2f} (>{ACWR_HIGH} — перегруз)")
-        label = "poor"
+    if m["acwr"] is not None and m["acwr"] > ACWR_HIGH:
+        drivers.append(f"ACWR {m['acwr']:.2f} (>{ACWR_HIGH} — перегруз)")
+        label = _worsen(label, "poor")
         safe_hard = False
 
-    # subjective feeling
-    feelings = metrics.get("feelings") or []
+    # Субъективное самочувствие: ≤2 два дня ПОДРЯД (смежные даты — инцидент ревью)
     if len(feelings) >= 2:
         last_two = sorted(feelings, key=lambda f: f.get("day", ""))[-2:]
-        if all((f.get("score") or 5) <= 2 for f in last_two):
+        try:
+            d1, d2 = (date.fromisoformat(str(f.get("day"))[:10]) for f in last_two)
+            adjacent = (d2 - d1).days == 1
+        except (ValueError, TypeError):
+            adjacent = False
+        if adjacent and all((f.get("score") or 5) <= 2 for f in last_two):
             drivers.append("самочувствие ≤2 два дня подряд")
-            label = "alarm"
+            label = _worsen(label, "alarm")
             safe_hard = False
 
     if metrics.get("overload_signal"):
         drivers.append("сигнал перегрузки в данных")
-        label = "alarm"
+        label = _worsen(label, "alarm")
         safe_hard = False
 
     return RecoveryStatus(label=label, drivers=drivers, safe_to_train_hard=safe_hard)
@@ -770,28 +822,26 @@ def _hours_from_minutes(val: Any) -> float | None:
         # garminDB обычно даёт секунды
         return float(val) / 3600.0
     secs = _time_to_secs(val)
-    return secs / 3600.0 if secs > 0 else None
+    if secs > 0:
+        return secs / 3600.0
+    # «0:00:00» — валидный ноль (инцидент ревью: caution молча пропадал);
+    # нераспознаваемая строка — None
+    return 0.0 if re.match(r"^\s*\d{1,3}:\d{2}", str(val)) else None
 
 
 def compute_morning_facts(metrics: dict, today: date | None = None) -> MorningFacts:
     """Сводит всё утро в один объект для подачи в analyze() как готовый блок."""
     today = today or date.today()
-    sleep = metrics.get("sleep_last_night") or metrics.get("sleep") or {}
-    rhr_block = metrics.get("resting_hr") or {}
-    bb = metrics.get("body_battery") or {}
-    hrv = metrics.get("hrv") or {}
-    fitness = metrics.get("fitness") or {}
+    m = _morning_inputs(metrics)
+    sleep = m["sleep"]
+    hrv = m["hrv"]
 
-    rhr = rhr_block.get("last")
-    rhr_base = rhr_block.get("avg_7d") or rhr_block.get("baseline")
-    rhr_delta = (rhr - rhr_base) if (rhr is not None and rhr_base) else None
+    rhr = m["rhr"]
+    rhr_base = m["rhr_baseline"]
+    rhr_delta = int(round(rhr - rhr_base)) if (rhr is not None and rhr_base) else None
 
-    avg_rr = sleep.get("avg_rr") or metrics.get("avg_rr")
-    if not isinstance(avg_rr, (int, float)):
-        avg_rr = None
-    avg_rr_base = metrics.get("avg_rr_baseline_7d") or sleep.get("avg_rr_baseline_7d")
-    if not isinstance(avg_rr_base, (int, float)):
-        avg_rr_base = None
+    avg_rr = m["avg_rr"]
+    avg_rr_base = m["avg_rr_base"]
     avg_rr_delta = (avg_rr - avg_rr_base) if (avg_rr is not None and avg_rr_base is not None) else None
 
     # yesterday brief: ищем последнюю активность за вчера
@@ -799,7 +849,7 @@ def compute_morning_facts(metrics: dict, today: date | None = None) -> MorningFa
     y_str = ""
     for a in metrics.get("activities_28d") or []:
         d = (a.get("start_time") or "")[:10]
-        if d == yesterday.isoformat() and a.get("sport") == "running":
+        if d == yesterday.isoformat() and a.get("sport") in RUN_SPORTS:
             dist = a.get("distance") or 0
             name = a.get("name") or "пробежка"
             y_str = f"{dist:.1f} км · {name}"
@@ -819,20 +869,20 @@ def compute_morning_facts(metrics: dict, today: date | None = None) -> MorningFa
 
     return MorningFacts(
         date=today,
-        sleep_total_h=_hours_from_minutes(sleep.get("total_sleep_secs")),
-        deep_sleep_h=_hours_from_minutes(sleep.get("deep_sleep_secs")),
-        rem_h=_hours_from_minutes(sleep.get("rem_sleep_secs")),
-        rhr=rhr,
-        rhr_baseline=rhr_base,
+        sleep_total_h=m["total_h"],
+        deep_sleep_h=m["deep_h"],
+        rem_h=m["rem_h"],
+        rhr=int(rhr) if rhr is not None else None,
+        rhr_baseline=int(rhr_base) if rhr_base is not None else None,
         rhr_delta=rhr_delta,
-        bb_min=bb.get("min") or bb.get("min_24h"),
-        bb_max=bb.get("max") or bb.get("max_24h"),
+        bb_min=m["bb_min"],
+        bb_max=m["bb_max"],
         hrv_status=hrv_status,
         avg_rr=avg_rr,
         avg_rr_baseline=avg_rr_base,
         avg_rr_delta=avg_rr_delta,
-        tsb=fitness.get("tsb") if isinstance(fitness.get("tsb"), (int, float)) else None,
-        acwr=fitness.get("acwr") if isinstance(fitness.get("acwr"), (int, float)) else None,
+        tsb=m["tsb"],
+        acwr=m["acwr"],
         recovery=recovery,
         yesterday_brief=y_str,
         sessions_8020=sessions_7d_line(metrics.get("activities_28d") or [], today),
@@ -850,7 +900,7 @@ import re as _re
 WEEKDAY_ABBRS = ("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
 _WEEKDAY_IDX = {abbr: i for i, abbr in enumerate(WEEKDAY_ABBRS)}
 _PLAN_DAY_RE = _re.compile(
-    r"\b(Пн|Вт|Ср|Чт|Пт|Сб|Вс)\.?\s+(\d{1,2})\.(\d{1,2})(?!\.\d)"
+    r"\b(Пн|Вт|Ср|Чт|Пт|Сб|Вс)\.?\s+(\d{1,2})\.(\d{1,2})(?!\d)(?!\.\d)"
 )
 
 
@@ -1039,7 +1089,11 @@ class OverloadVerdict:
 
 def rhr_median_baseline(daily_trend: list[dict]) -> float | None:
     """База RHR = медиана 7 дней (устойчива к выбросам). Единственное определение."""
-    vals = sorted(d.get("rhr") for d in daily_trend if d.get("rhr"))
+    vals = sorted(
+        d.get("rhr") or d.get("resting_heart_rate")
+        for d in daily_trend
+        if d.get("rhr") or d.get("resting_heart_rate")
+    )
     return vals[len(vals) // 2] if vals else None
 
 
@@ -1087,7 +1141,7 @@ def overload_verdict(
     # 5. Самочувствие ≤2 два дня подряд
     if feelings and len(feelings) >= 2:
         consecutive_low = 0
-        for f in reversed([f["score"] for f in feelings[-3:]]):
+        for f in reversed([f.get("score") or 5 for f in feelings[-3:]]):
             if f <= 2:
                 consecutive_low += 1
             else:
@@ -1132,7 +1186,7 @@ def overload_verdict(
                 "признак перетренированности, принудительное восстановление")
 
     # 8. Экономичность бега (скорость/пульс на аэробных) падает за 4 недели
-    runs = [a for a in (activities_28d or []) if a.get("sport") == "running"]
+    runs = [a for a in (activities_28d or []) if a.get("sport") in RUN_SPORTS]
     econ: list[tuple[str, float]] = []
     for a in runs:
         spd, hr = a.get("avg_speed"), a.get("avg_hr")

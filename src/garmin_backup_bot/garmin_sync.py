@@ -518,6 +518,18 @@ class GarminSyncMixin:
                     description = summary.get("wellnessDescription")
             except Exception as exc:
                 logger.debug("Failed to get daily summary for %s: %s", day_iso, exc)
+                summary = None
+
+            # Ревью 16.07: при фейле usersummary INSERT OR REPLACE затирал
+            # существующую строку дня NULL'ами. Есть старая строка — не трогаем.
+            if not summary:
+                try:
+                    with sqlite3.connect(garmin_db, timeout=5) as _c:
+                        if _c.execute("SELECT 1 FROM daily_summary WHERE day=?",
+                                      (day_iso,)).fetchone():
+                            continue
+                except sqlite3.Error:
+                    pass
                 
             # TIME-колонки с NOT NULL в legacy-схемах (эра GarminDB): день без часов
             # даёт null-минуты → INSERT падал и убивал ВЕСЬ health-синк
@@ -678,7 +690,19 @@ class GarminSyncMixin:
                 start_time_local = summary.get("startTimeLocal")
                 if start_time_local and len(start_time_local) == 19:
                     start_time_local += ".000000"
-                stop_time_local = summary.get("startTimeLocal")
+                # stop = start + длительность (ревью 16.07: был copy-paste старта,
+                # endTimeLocal API не отдаёт)
+                stop_time_local = None
+                _dur = summary.get("elapsedDuration") or summary.get("duration")
+                if start_time_local and _dur:
+                    try:
+                        _st = datetime.strptime(start_time_local[:19], "%Y-%m-%d %H:%M:%S")
+                        stop_time_local = (_st + timedelta(seconds=float(_dur))).strftime(
+                            "%Y-%m-%d %H:%M:%S.%f")
+                    except (ValueError, TypeError):
+                        stop_time_local = start_time_local
+                else:
+                    stop_time_local = start_time_local
                 
                 avg_speed = None
                 max_speed = None

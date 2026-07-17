@@ -421,6 +421,7 @@ class GarminMetricsMixin:
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='activity_records'"
             ).fetchone()
             laps_dir = self._workdir_root / str(user_id) / "laps"
+            splits_dir = self._workdir_root / str(user_id) / "splits"
             weather_dir = self._workdir_root / str(user_id) / "weather"
             for act in activities:
                 act["km_splits"] = []
@@ -442,7 +443,17 @@ class GarminMetricsMixin:
                         act["weather"] = json.loads(weather_file.read_text())
                     except Exception:
                         pass
-                # Compute per-km splits from activity_records
+                # Km-сплиты: сперва JSON от garth-синка (ревью 16.07: раньше файл
+                # никто не читал, а activity_records после миграции пуста)
+                split_file = splits_dir / f"{act['activity_id']}.json"
+                if split_file.exists():
+                    try:
+                        act["km_splits"] = json.loads(split_file.read_text())
+                    except Exception:
+                        pass
+                if act["km_splits"]:
+                    continue
+                # Fallback: посекундные точки GarminDB-эры (legacy-юзеры)
                 if not has_records:
                     continue
                 records = conn.execute(

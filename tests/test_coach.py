@@ -697,3 +697,97 @@ class TestSessions8020(unittest.TestCase):
 
     def test_no_runs_empty(self):
         self.assertEqual(coach.sessions_7d_line([], self.TODAY), "")
+
+
+class TestRecoveryRealShapes(unittest.TestCase):
+    """Ревью 16.07: пороги recovery читали ключи, которых пайплайн не производит
+    (total_sleep_secs, resting_hr.last, body_battery.min, fitness.acwr) — и молча
+    не срабатывали НИКОГДА. Тесты на РЕАЛЬНЫХ формах collect_daily_metrics."""
+
+    def _real_metrics(self, **over):
+        m = {
+            "sleep": {"day": "2026-07-16", "total_sleep": "5:58:00",
+                      "deep_sleep": "0:50:00", "rem_sleep": "0:46:00", "avg_rr": 14.0},
+            "resting_hr": {"day": "2026-07-16", "resting_heart_rate": 52.0},
+            "rhr_trend_7d": [{"day": f"2026-07-{d:02d}", "resting_heart_rate": 44.0}
+                             for d in range(9, 16)],
+            "daily_summary": {"day": "2026-07-16", "bb_min": 22, "bb_max": 88},
+            "sleep_trend_7d": [{"day": f"2026-07-{d:02d}", "avg_rr": 14.2}
+                               for d in range(9, 16)],
+            "hrv": {"status": "BALANCED", "last_night_avg": 65,
+                    "baseline_balanced_low": 58, "baseline_balanced_upper": 81},
+            "fitness": {"atl": 60.0, "ctl": 35.0, "tsb": -10.0},
+        }
+        m.update(over)
+        return m
+
+    def test_all_thresholds_fire_on_real_shapes(self):
+        r = coach.compute_recovery_status(self._real_metrics())
+        joined = " | ".join(r.drivers)
+        self.assertIn("общий сон 6.0ч", joined)            # строка "5:58:00" распарсена
+        self.assertIn("deep sleep 0.8ч", joined)
+        self.assertIn("RHR 52 (+8 над базой 44)", joined)  # resting_heart_rate + тренд
+        self.assertIn("Body Battery min 22", joined)       # из daily_summary
+        self.assertIn("ACWR 1.71", joined)                 # выведен из atl/ctl
+        self.assertEqual(r.label, "poor")
+        self.assertFalse(r.safe_to_train_hard)
+
+    def test_alarm_never_downgraded(self):
+        # рост ЧД (alarm) + перегруз TSB (poor) → остаётся alarm
+        m = self._real_metrics(fitness={"atl": 30, "ctl": 40, "tsb": -30.0})
+        m["sleep"]["avg_rr"] = 17.0  # +2.8 к базе 14.2
+        r = coach.compute_recovery_status(m)
+        self.assertEqual(r.label, "alarm")
+
+    def test_hrv_low_night_out_of_base_is_poor(self):
+        m = self._real_metrics()
+        m["sleep"] = {"day": "2026-07-16", "total_sleep": "8:00:00",
+                      "deep_sleep": "1:30:00", "rem_sleep": "1:40:00"}
+        m["resting_hr"]["resting_heart_rate"] = 44.0
+        m["daily_summary"]["bb_min"] = 70
+        m["fitness"] = {"atl": 30, "ctl": 35, "tsb": 0.0}
+        m["hrv"] = {"status": "LOW", "last_night_avg": 50,
+                    "baseline_balanced_low": 58, "baseline_balanced_upper": 81}
+        r = coach.compute_recovery_status(m)
+        self.assertEqual(r.label, "poor")
+        self.assertFalse(r.safe_to_train_hard)
+
+    def test_zero_sleep_is_zero_not_none(self):
+        m = self._real_metrics()
+        m["sleep"]["total_sleep"] = "0:00:00"
+        r = coach.compute_recovery_status(m)
+        self.assertIn("общий сон 0.0ч", " | ".join(r.drivers))
+
+    def test_feelings_must_be_adjacent_days(self):
+        base = {"sleep": {"day": "2026-07-16", "total_sleep": "8:00:00"},
+                "feelings": [{"day": "2026-07-10", "score": 2},
+                             {"day": "2026-07-16", "score": 2}]}
+        self.assertNotEqual(coach.compute_recovery_status(base).label, "alarm")
+        base["feelings"] = [{"day": "2026-07-15", "score": 2},
+                            {"day": "2026-07-16", "score": 2}]
+        self.assertEqual(coach.compute_recovery_status(base).label, "alarm")
+
+    def test_morning_facts_uses_real_shapes(self):
+        mf = coach.compute_morning_facts(self._real_metrics(), today=date(2026, 7, 16))
+        self.assertEqual(mf.rhr, 52)
+        self.assertEqual(mf.rhr_baseline, 44)
+        self.assertEqual(mf.bb_min, 22)
+        self.assertAlmostEqual(mf.sleep_total_h, 5.97, places=1)
+        self.assertAlmostEqual(mf.acwr, 60/35, places=2)
+
+
+class TestPlanDayRegexFullDates(unittest.TestCase):
+    """Ревью 16.07: на «06.07.2026» regex бэктрекался в месяц «0» → ValueError/порча."""
+
+    def test_full_date_skipped_not_corrupted(self):
+        text = "Пн 06.07.2026: лёгкий бег 8 км"
+        check = coach.check_plan_dates(text, today=date(2026, 7, 6))
+        # полная дата с годом не матчится вовсе — текст не портится
+        fixed, n = coach.fix_plan_dates(text, date(2026, 7, 6))
+        self.assertEqual(fixed, text)
+        self.assertEqual(n, 0)
+
+    def test_short_date_still_matches(self):
+        m = coach._PLAN_DAY_RE.search("Пн 06.07: бег")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(3), "07")
