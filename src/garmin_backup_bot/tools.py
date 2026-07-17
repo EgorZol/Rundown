@@ -117,6 +117,9 @@ def build_tool_schemas(
             "name": "query_activities_db",
             "description": (
                 "Выполни SELECT к базе тренировок Garmin (garmin_activities.db). Таблицы и колонки:\n"
+                "⚠️ БЕГ — это НЕ только sport='running': дорожка/трейл/манеж имеют свои значения. "
+                "Для любых беговых выборок используй sport IN ('running','street_running','trail_running',"
+                "'track_running','treadmill_running','indoor_running','virtual_run').\n"
                 "• activities — activity_id, name, sport, sub_sport, start_time, stop_time, "
                 "elapsed_time, moving_time, distance, calories, "
                 "avg_hr, max_hr, avg_rr, max_rr, avg_cadence, max_cadence, avg_speed, max_speed, "

@@ -378,7 +378,7 @@ def cadence_verdict(pace_min: float | None, cadence_value: int | None) -> tuple[
 def intensity_class(activity: dict, primary_z: int | None, z1_z3_pct: int | None) -> str:
     """Грубая классификация на основе зон и дистанции."""
     sport = activity.get("sport") or ""
-    if sport != "running":
+    if sport not in RUN_SPORTS:
         return "unknown"
     dist = activity.get("distance") or 0
     name = (activity.get("name") or "").lower()
@@ -461,7 +461,7 @@ def filter_running_in_window(
     out = []
     ws, we = week_start.isoformat(), week_end.isoformat()
     for a in activities or []:
-        if a.get("sport") != "running":
+        if a.get("sport") not in RUN_SPORTS:
             continue
         day = (a.get("start_time") or "")[:10]
         if ws <= day <= we:
@@ -1007,8 +1007,8 @@ def fix_plan_dates(plan_text: str, week_start: date) -> tuple[str, int]:
 # ============================================================================
 
 RUN_SPORTS = frozenset((
-    "running", "trail_running", "track_running",
-    "treadmill_running", "indoor_running",
+    "running", "street_running", "trail_running", "track_running",
+    "treadmill_running", "indoor_running", "virtual_run",
 ))
 
 

@@ -12,6 +12,8 @@ if TYPE_CHECKING:
     from .analyst import HealthAnalyst
     from .garmin_service import GarminService
 
+from .coach import RUN_SPORTS
+
 logger = logging.getLogger(__name__)
 
 WEEK_TYPE_NAMES = {
@@ -258,9 +260,9 @@ class WeeklyPlanBuilder:
         cur_tl = sum(a.get("training_load") or 0 for a in acts_pool if _in(a, lw_start, lw_end))
         prev_tl = sum(a.get("training_load") or 0 for a in acts_pool if _in(a, pw_start, lw_start))
         cur_km = sum(a.get("distance") or 0 for a in acts_pool
-                     if a.get("sport") == "running" and _in(a, lw_start, lw_end))
+                     if a.get("sport") in RUN_SPORTS and _in(a, lw_start, lw_end))
         prev_km = sum(a.get("distance") or 0 for a in acts_pool
-                      if a.get("sport") == "running" and _in(a, pw_start, lw_start))
+                      if a.get("sport") in RUN_SPORTS and _in(a, pw_start, lw_start))
 
         # ── HARD SAFETY (высший приоритет, override всего включая гонки) ──
         # Все правила перегруза — в coach.overload_verdict (единый источник порогов).
@@ -361,7 +363,7 @@ class WeeklyPlanBuilder:
                 return "base", f"ACWR {acwr:.2f} (1.2-1.5) — повышенная нагрузка, без наращивания", 1.0
 
         # ── Edge case: no runs for >8 days ──
-        run_acts = [a for a in activities_14d if a.get("sport") == "running"]
+        run_acts = [a for a in activities_14d if a.get("sport") in RUN_SPORTS]
         if run_acts:
             last_run_date = max(a.get("start_time", "")[:10] for a in run_acts)
             days_since_run = (today - date.fromisoformat(last_run_date)).days
@@ -407,7 +409,7 @@ class WeeklyPlanBuilder:
         Tempo pace: top-third fastest runs 5-12 km.
         Long run pace: average of runs >12 km.
         """
-        running = [a for a in activities if a.get("sport") == "running"]
+        running = [a for a in activities if a.get("sport") in RUN_SPORTS]
         if not running:
             return {}
 
@@ -956,7 +958,7 @@ class WeeklyPlanBuilder:
         ]
 
         def _acts_summary(acts: list[dict]) -> str:
-            run = [a for a in acts if a.get("sport") == "running"]
+            run = [a for a in acts if a.get("sport") in RUN_SPORTS]
             km = sum(a.get("distance") or 0 for a in run)
             tl = sum(a.get("training_load") or 0 for a in acts)
             return f"{len(acts)} тренировок, бег {km:.0f} км, TL {tl:.0f}"
@@ -967,7 +969,7 @@ class WeeklyPlanBuilder:
 
         # Average weekly volume over last 4 weeks (from activities_28d)
         all_28d = metrics.get("activities_28d") or activities_14d
-        run_28d = [a for a in all_28d if a.get("sport") == "running"]
+        run_28d = [a for a in all_28d if a.get("sport") in RUN_SPORTS]
         if run_28d:
             # Group runs by calendar week (ISO Monday-based)
             weekly_km: dict[str, float] = {}
@@ -1025,7 +1027,7 @@ class WeeklyPlanBuilder:
             avail_days = None
         if not avail_days:
             all_28d = metrics.get("activities_28d") or activities_14d
-            run_28d_for_days = [a for a in all_28d if a.get("sport") == "running" and a.get("start_time")]
+            run_28d_for_days = [a for a in all_28d if a.get("sport") in RUN_SPORTS and a.get("start_time")]
             if run_28d_for_days:
                 day_counts: dict[int, int] = {}
                 for a in run_28d_for_days:
@@ -1042,7 +1044,7 @@ class WeeklyPlanBuilder:
                     parts.append(f"  Обычные дни бега (авто): {', '.join(day_names_ru[d] for d in typical_days)}")
 
         # 80/20 balance of current week — Garmin native zones (Z1-Z3 aerobic, Z4-Z5 intensity)
-        run_cur = [a for a in cur_acts if a.get("sport") == "running"]
+        run_cur = [a for a in cur_acts if a.get("sport") in RUN_SPORTS]
         if run_cur:
             aero_secs = 0.0
             total_run_secs = 0.0
@@ -1137,7 +1139,7 @@ class WeeklyPlanBuilder:
 
         # ── Long run progression ──
         all_28d = metrics.get("activities_28d") or activities_14d
-        run_28d = [a for a in all_28d if a.get("sport") == "running"]
+        run_28d = [a for a in all_28d if a.get("sport") in RUN_SPORTS]
         if run_28d:
             long_runs_sorted = sorted(
                 [(a.get("distance") or 0, a.get("start_time", "")[:10]) for a in run_28d],
@@ -1303,7 +1305,7 @@ class WeeklyPlanBuilder:
                 # Find runs on this exact day
                 day_runs = [
                     a for a in activities_14d
-                    if a.get("start_time", "").startswith(day_str) and a.get("sport") == "running"
+                    if a.get("start_time", "").startswith(day_str) and a.get("sport") in RUN_SPORTS
                 ]
                 day_other = [
                     a for a in activities_14d

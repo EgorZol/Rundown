@@ -16,6 +16,8 @@ from telegram.ext import ContextTypes
 
 from .bot_common import BTN_MORNING, BTN_WORKOUT, MAIN_KEYBOARD, _api_error_msg, _is_garmin_auth_error
 
+from .coach import RUN_SPORTS
+
 logger = logging.getLogger(__name__)
 
 
@@ -82,7 +84,7 @@ class ReportsMixin:
                 metrics["fitness_profile"] = overrides
             # Extract Garmin HR zone boundaries from most recent running activity
             # hrz_X_hr = FLOOR (lower bound) of zone X
-            run_acts = [a for a in (metrics.get("activities_28d") or []) if a.get("sport") == "running" and a.get("hrz_1_hr")]
+            run_acts = [a for a in (metrics.get("activities_28d") or []) if a.get("sport") in RUN_SPORTS and a.get("hrz_1_hr")]
             if run_acts:
                 latest_run = run_acts[0]  # activities_28d is sorted DESC by start_time
                 metrics["garmin_zones"] = {
@@ -267,7 +269,7 @@ class ReportsMixin:
                 metrics["plan_missing"] = True
 
             # Dynamic weekly km target based on race schedule
-            run_acts = [a for a in (metrics.get("activities_28d") or []) if a.get("sport") == "running"]
+            run_acts = [a for a in (metrics.get("activities_28d") or []) if a.get("sport") in RUN_SPORTS]
             weekly_km_vals = []
             for i in range(4):
                 ws = (today - timedelta(days=today.weekday() + 7 * i)).isoformat()
@@ -664,7 +666,7 @@ class ReportsMixin:
             upcoming_races = self._storage.get_races(user_id, from_date=today.isoformat())
             # Dynamic weekly km target based on race schedule
             if metrics:
-                run_acts = [a for a in (metrics.get("activities_28d") or []) if a.get("sport") == "running"]
+                run_acts = [a for a in (metrics.get("activities_28d") or []) if a.get("sport") in RUN_SPORTS]
                 recent_km = sum(a.get("distance", 0) for a in run_acts[-4:]) / max(len(run_acts[-4:]) / (7/7), 1) if run_acts else 30.0
                 weekly_km_vals = []
                 for i in range(4):

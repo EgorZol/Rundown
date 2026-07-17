@@ -11,6 +11,8 @@ import datetime
 import logging
 from typing import Any
 
+from .coach import RUN_SPORTS
+
 logger = logging.getLogger(__name__)
 
 
@@ -604,7 +606,7 @@ class FormattingMixin:
                 if zones_str:
                     lines.append(f"    Зоны: {zones_str}")
                 # Running dynamics (only for running)
-                if sport == "running":
+                if sport in RUN_SPORTS:
                     dyn = self._fmt_run_dynamics(a)
                     if dyn:
                         lines.append(f"    Динамика: {dyn}")
@@ -765,7 +767,7 @@ class FormattingMixin:
                 if a.get("start_time", "") >= from_date.isoformat()
                 and a.get("start_time", "") <= to_date.isoformat() + "T99"
             ]
-            run = [a for a in sel if a.get("sport") == "running"]
+            run = [a for a in sel if a.get("sport") in RUN_SPORTS]
             run_km = sum(a.get("distance") or 0 for a in run)
             run_secs = sum(self._time_str_to_secs(a.get("moving_time")) for a in run)
             hrs_all = [a.get("avg_hr") for a in run if a.get("avg_hr")]
@@ -793,7 +795,7 @@ class FormattingMixin:
 
         # Today's activities — explicit to prevent hallucination
         today_acts = [a for a in activities if a.get("start_time", "").startswith(today.isoformat())]
-        today_runs = [a for a in today_acts if a.get("sport") == "running"]
+        today_runs = [a for a in today_acts if a.get("sport") in RUN_SPORTS]
 
         # Rolling 7-day windows (end at YESTERDAY to avoid implying activity today)
         d7_end = today - _td(days=1)
@@ -839,7 +841,7 @@ class FormattingMixin:
         w2 = weeks[1][2]
 
         # Total 28-day stats
-        all_run = [a for a in activities if a.get("sport") == "running"]
+        all_run = [a for a in activities if a.get("sport") in RUN_SPORTS]
         total_km_28 = sum(a.get("distance") or 0 for a in all_run)
         total_secs_28 = sum(self._time_str_to_secs(a.get("moving_time")) for a in all_run)
         pace_28 = _fmt_pace(total_secs_28, total_km_28)
@@ -917,7 +919,7 @@ class FormattingMixin:
         )
 
         # Session-based 80/20 (Seiler) — Garmin zone times
-        run_7d = [a for a in activities if a.get("sport") == "running"
+        run_7d = [a for a in activities if a.get("sport") in RUN_SPORTS
                   and a.get("start_time", "") >= d7_start.isoformat()]
         if len(run_7d) >= 2:
             easy_s = 0

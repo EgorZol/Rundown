@@ -119,7 +119,7 @@ class GarminMetricsMixin:
                 # Observed all-time max HR from running activities (more reliable than formula)
                 row = conn.execute(
                     "SELECT MAX(max_hr) AS observed_hr_max FROM activities "
-                    "WHERE sport = 'running' AND max_hr IS NOT NULL AND max_hr < 220"
+                    "WHERE sport IN ('running','street_running','trail_running','track_running','treadmill_running','indoor_running','virtual_run') AND max_hr IS NOT NULL AND max_hr < 220"
                 ).fetchone()
                 if row and row["observed_hr_max"]:
                     result["observed_hr_max"] = int(row["observed_hr_max"])
@@ -285,7 +285,7 @@ class GarminMetricsMixin:
             # We look at running activities and find fastest at each distance range
             rows = conn.execute(
                 "SELECT activity_id, name, start_time, distance, moving_time, avg_hr, avg_speed "
-                "FROM activities WHERE sport = 'running' AND distance IS NOT NULL "
+                "FROM activities WHERE sport IN ('running','street_running','trail_running','track_running','treadmill_running','indoor_running','virtual_run') AND distance IS NOT NULL "
                 "AND moving_time IS NOT NULL ORDER BY start_time DESC"
             ).fetchall()
 
