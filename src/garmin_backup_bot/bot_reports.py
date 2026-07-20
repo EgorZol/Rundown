@@ -14,7 +14,7 @@ from telegram import (
 )
 from telegram.ext import ContextTypes
 
-from .bot_common import BTN_MORNING, BTN_WORKOUT, MAIN_KEYBOARD, _api_error_msg, _is_garmin_auth_error
+from .bot_common import BTN_MORNING, BTN_PLAN, BTN_WORKOUT, MAIN_KEYBOARD, _api_error_msg, _is_garmin_auth_error
 
 from .coach import RUN_SPORTS
 

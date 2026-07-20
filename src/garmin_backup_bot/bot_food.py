@@ -186,7 +186,7 @@ class FoodMixin:
             )
             return
 
-        _saved = self._autosave_displaced_pending(user_id, context)
+        _saved = self._autosave_displaced_pending(update.effective_user.id, context)
         if _saved:
             await update.message.reply_text(f"💾 Предыдущее ({_saved[:40]}) сохранил автоматически.")
         context.user_data["pending_food"] = result
