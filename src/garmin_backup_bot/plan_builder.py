@@ -188,18 +188,24 @@ class WeeklyPlanBuilder:
         previous_plan: str = "",
         past_races: list[dict] | None = None,
         week_start: date | None = None,
-    ) -> tuple[str, str]:
-        """Return (plan_text, week_type_key).
+        athlete_prefs: str = "",
+        safety_override: bool = False,
+    ) -> tuple[str, str, str | None]:
+        """Return (plan_text, week_type_key, safety_reason).
 
         week_start — понедельник ЦЕЛЕВОЙ недели плана (в воскресенье хендлер
         передаёт следующую неделю, см. coach.plan_week_start). None — текущая.
+        athlete_prefs — постоянные пожелания атлета (storage.plan_preferences).
+        safety_override — атлет осознанно снял hard-safety на эту неделю.
+        safety_reason — причина сработавшего hard-safety (None, если не сработал);
+        по ней хендлер решает, показывать ли кнопку снятия ограничения.
         """
         activities = self._service.collect_recent_activities(user_id, days=14)
         activities_14d = metrics.get("activities_14d", [])
 
-        week_type, reasoning, volume_factor = self.determine_week_type(
+        week_type, reasoning, volume_factor, safety_reason = self.determine_week_type(
             metrics, activities_14d, upcoming_races or [], feelings=feelings,
-            past_races=past_races or [],
+            past_races=past_races or [], safety_override=safety_override,
         )
         paces = self.extract_real_paces(activities)
         # Enrich with VDOT-calculated paces from VO2max
@@ -217,14 +223,19 @@ class WeeklyPlanBuilder:
                 if adj:
                     paces["vdot"] = adj["corrected_paces"]
                     paces["vdot_note"] = adj["note"]
-        context = self._build_context(metrics, activities_14d, week_type, reasoning, volume_factor, paces, training_goal, upcoming_races or [], previous_plan=previous_plan, week_start=week_start)
+        context = self._build_context(
+            metrics, activities_14d, week_type, reasoning, volume_factor, paces,
+            training_goal, upcoming_races or [], previous_plan=previous_plan,
+            week_start=week_start, athlete_prefs=athlete_prefs,
+            safety_reason=safety_reason, safety_override=safety_override,
+        )
 
         plan_text = await self._analyst.analyze_plan(
             context, history=history, user_memory=user_memory,
             fitness_profile=metrics.get("fitness_profile"),
             garmin_zones=metrics.get("garmin_zones"),
         )
-        return plan_text, week_type
+        return plan_text, week_type, safety_reason
 
     def determine_week_type(
         self,
@@ -233,11 +244,46 @@ class WeeklyPlanBuilder:
         upcoming_races: list[dict] | None = None,
         feelings: list[dict] | None = None,
         past_races: list[dict] | None = None,
-    ) -> tuple[str, str, float]:
-        """Return (type_key, reasoning, volume_factor).
+        safety_override: bool = False,
+    ) -> tuple[str, str, float, str | None]:
+        """Return (type_key, reasoning, volume_factor, safety_reason).
 
-        Safety-first: overtraining signals ALWAYS force recovery, even during race prep.
+        Safety-first: сигнал перегруза (coach.overload_verdict) принудительно
+        даёт recovery — даже в подводке к гонке. Исключение: атлет ОСОЗНАННО
+        снял ограничение на эту неделю (safety_override=True, процесс от
+        20.07.2026) — тогда тип недели считается по периодизации, но объём
+        не наращивается (volume_factor ≤ 1.0), а причина сигнала уходит в
+        reasoning и в контекст LLM. safety_reason возвращается всегда, когда
+        сигнал сработал, — по нему хендлер показывает кнопку снятия.
         """
+        verdict = coach.overload_verdict(
+            metrics,
+            activities_28d=metrics.get("activities_28d") or activities_14d,
+            feelings=feelings,
+        )
+        if verdict and not safety_override:
+            return "recovery", verdict.reason, verdict.volume_factor, verdict.reason
+
+        wt, reasoning, vf = self._periodized_week_type(
+            metrics, activities_14d, upcoming_races, past_races,
+        )
+        if verdict:
+            reasoning += (
+                f" ⚠️ Сигнал перегруза ({verdict.reason}) снят атлетом осознанно — "
+                "без наращивания объёма"
+            )
+            vf = min(vf, 1.0)
+        return wt, reasoning, vf, verdict.reason if verdict else None
+
+    def _periodized_week_type(
+        self,
+        metrics: dict[str, Any],
+        activities_14d: list[dict],
+        upcoming_races: list[dict] | None = None,
+        past_races: list[dict] | None = None,
+    ) -> tuple[str, str, float]:
+        """Периодизация без hard-safety: пост-гоночное восстановление, макроцикл
+        к гонке, TSB/ACWR/объёмные правила."""
         target_date_str = metrics.get("date", "")
         try:
             today = date.fromisoformat(target_date_str) if target_date_str else date.today()
@@ -264,15 +310,8 @@ class WeeklyPlanBuilder:
         prev_km = sum(a.get("distance") or 0 for a in acts_pool
                       if a.get("sport") in RUN_SPORTS and _in(a, pw_start, lw_start))
 
-        # ── HARD SAFETY (высший приоритет, override всего включая гонки) ──
-        # Все правила перегруза — в coach.overload_verdict (единый источник порогов).
-        verdict = coach.overload_verdict(
-            metrics,
-            activities_28d=metrics.get("activities_28d") or activities_14d,
-            feelings=feelings,
-        )
-        if verdict:
-            return "recovery", verdict.reason, verdict.volume_factor
+        # Hard-safety проверяется в determine_week_type (обёртка) —
+        # здесь только периодизация.
 
         # ── POST-RACE RECOVERY (1 day rest per 3km of race distance) ──
         if past_races:
@@ -840,6 +879,9 @@ class WeeklyPlanBuilder:
         upcoming_races: list[dict] | None = None,
         previous_plan: str = "",
         week_start: date | None = None,
+        athlete_prefs: str = "",
+        safety_reason: str | None = None,
+        safety_override: bool = False,
     ) -> str:
         today = date.fromisoformat(metrics["date"]) if metrics.get("date") else date.today()
         if week_start is None:
@@ -848,6 +890,14 @@ class WeeklyPlanBuilder:
         parts = [f"=== ПЛАН НА НЕДЕЛЮ с {week_start.strftime('%d.%m')} ===\n"]
         if training_goal:
             parts.append(f"ГЛАВНАЯ ЦЕЛЬ АТЛЕТА: {training_goal}")
+        if athlete_prefs:
+            parts.append(
+                "ПОЖЕЛАНИЯ АТЛЕТА К ПЛАНУ (постоянные, сохранены им самим):\n"
+                f"  {athlete_prefs}\n"
+                "  Выполняй их в рамках типа недели и безопасности. Если какое-то "
+                "пожелание в эту неделю невыполнимо (тип недели/сигналы) — прямо "
+                "напиши в конце плана, какое и почему."
+            )
 
         # Race calendar — drives periodization phase
         if upcoming_races:
@@ -889,6 +939,22 @@ class WeeklyPlanBuilder:
         parts.append(f"Поправочный коэффициент объёма: {volume_factor} (1.0 = базовый)")
         if week_type == "recovery":
             parts.append("[СИГНАЛ_ПЕРЕГРУЗКИ] — ЖЁСТКОЕ ПРАВИЛО: только Z1-Z3, никаких интервалов, объём 60%")
+        if safety_reason and not safety_override:
+            parts.append(
+                "ОБЯЗАТЕЛЬНО скажи в конце плана: неделя разгрузочная из-за сигнала "
+                f"перегруза ({safety_reason}). Если атлет считает этот сигнал своей "
+                "нормой и готов взять риск на себя — под планом есть кнопка, снимающая "
+                "ограничение на эту неделю."
+            )
+        if safety_reason and safety_override:
+            parts.append(
+                "[ОГРАНИЧЕНИЕ СНЯТО АТЛЕТОМ] Сигнал перегруза сработал "
+                f"({safety_reason}), но атлет ОСОЗНАННО снял ограничение и взял риск "
+                "на себя. Строй тренировочную неделю по фазе, но консервативно: "
+                "максимум 2 интенсивных сессии, между ними ≥2 дня, объём без роста. "
+                "ПЕРВОЙ строкой плана — предупреждение: какой сигнал горит и что "
+                "атлет тренируется под свою ответственность; посоветуй, за чем следить."
+            )
 
         # Dynamic weekly km target from race schedule
         dyn_target = metrics.get("weekly_km_target")

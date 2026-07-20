@@ -554,6 +554,18 @@ class QAMixin:
             tool_actions.append({"kind": "profile_set", "field": "дни бега", "value": human})
             return f"OK: дни бега сохранены в профиль — {human}. План будет строиться по ним"
 
+        def _set_plan_preferences_fn(text: str) -> str:
+            text = (text or "").strip()
+            self._storage.save_plan_preferences(user_id, text)
+            if not text:
+                tool_actions.append({"kind": "profile_set", "field": "пожелания к плану", "value": "очищены"})
+                return "OK: пожелания к плану очищены"
+            tool_actions.append({"kind": "profile_set", "field": "пожелания к плану", "value": text[:80]})
+            return (
+                "OK: пожелания к плану сохранены — конвейер будет учитывать их при "
+                "каждой генерации. Предложи атлету перестроить план (кнопка 📅 План)"
+            )
+
         # ── «Слова = кнопка»: запуск того же хендлера, что и кнопка ──
         _ACTION_HANDLERS = {
             "morning": self.handle_morning,
@@ -597,6 +609,7 @@ class QAMixin:
             "set_timezone": _set_timezone_fn,
             "set_experience": _set_experience_fn,
             "set_available_days": _set_available_days_fn,
+            "set_plan_preferences": _set_plan_preferences_fn,
             "invoke_action": _invoke_action_fn,
         }
 
@@ -618,6 +631,9 @@ class QAMixin:
                     _pm["plan_text"], today + timedelta(days=1))
             else:
                 metrics["plan_missing"] = True
+            _prefs = self._storage.get_plan_preferences(user_id)
+            if _prefs:
+                metrics["plan_prefs"] = _prefs
         qa_week_facts = _coach.compute_week_facts(
             activities=qa_week_acts,
             week_start=qa_week_start,

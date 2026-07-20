@@ -85,10 +85,11 @@ class TestWeekTypeVolumeWindows(unittest.TestCase):
         last_week = _week_runs(this_monday - timedelta(days=7), [8, 0, 8, 0, 8, 0, 6])   # 30 км
         prev_week = _week_runs(this_monday - timedelta(days=14), [8, 0, 8, 0, 7, 0, 6])  # 29 км
         metrics = dict(self.metrics_base, activities_28d=last_week + prev_week)
-        wt, reason, vf = self.b.determine_week_type(metrics, last_week, [], feelings=[], past_races=[])
+        wt, reason, vf, safety = self.b.determine_week_type(metrics, last_week, [], feelings=[], past_races=[])
         self.assertEqual(wt, "build")
         self.assertIn("прошлая неделя 30", reason)
         self.assertLessEqual(vf, 1.10)
+        self.assertIsNone(safety)
 
     def test_monday_not_empty_week(self):
         # В понедельник «текущая» скользящая неделя была бы пустой —
@@ -98,7 +99,7 @@ class TestWeekTypeVolumeWindows(unittest.TestCase):
         prev_week = _week_runs(monday - timedelta(days=14), [8, 0, 8, 0, 7, 0, 6])
         metrics = dict(self.metrics_base, date=monday.isoformat(),
                        activities_28d=last_week + prev_week)
-        wt, reason, _ = self.b.determine_week_type(metrics, last_week, [], feelings=[], past_races=[])
+        wt, reason, _, _ = self.b.determine_week_type(metrics, last_week, [], feelings=[], past_races=[])
         self.assertEqual(wt, "build")
 
     def test_volume_jump_base(self):
@@ -106,7 +107,7 @@ class TestWeekTypeVolumeWindows(unittest.TestCase):
         last_week = _week_runs(this_monday - timedelta(days=7), [12, 0, 12, 0, 12, 0, 12])  # 48
         prev_week = _week_runs(this_monday - timedelta(days=14), [8, 0, 8, 0, 8, 0, 6])     # 30
         metrics = dict(self.metrics_base, activities_28d=last_week + prev_week)
-        wt, reason, _ = self.b.determine_week_type(metrics, last_week, [], feelings=[], past_races=[])
+        wt, reason, _, _ = self.b.determine_week_type(metrics, last_week, [], feelings=[], past_races=[])
         self.assertEqual(wt, "base")
         self.assertIn("скачок", reason.lower())
 
@@ -116,9 +117,58 @@ class TestWeekTypeVolumeWindows(unittest.TestCase):
         metrics = dict(self.metrics_base, daily_trend_7d=trend)
         races = [{"date": (TODAY + timedelta(days=10)).isoformat(), "name": "Гонка",
                   "distance_km": 21.1, "is_priority": 1}]
-        wt, reason, vf = self.b.determine_week_type(metrics, [], races, feelings=[], past_races=[])
+        wt, reason, vf, safety = self.b.determine_week_type(metrics, [], races, feelings=[], past_races=[])
         self.assertEqual(wt, "recovery")
         self.assertIn("BB", reason)
+        self.assertIn("BB", safety)
+
+
+class TestSafetyOverride(unittest.TestCase):
+    """Процесс 20.07.2026: атлет осознанно снимает hard-safety на неделю."""
+
+    def setUp(self):
+        self.b = WeeklyPlanBuilder(analyst=None, service=None)
+        # Сигнал перегруза: BB < 50 три дня
+        self.trend = [{"rhr": 50, "bb_max": 40}] * 3 + [{"rhr": 50, "bb_max": 80}] * 4
+        self.metrics = {
+            "date": TODAY.isoformat(),
+            "daily_trend_7d": self.trend,
+            "fitness": {"tsb": 0, "ctl": 40, "atl": 40},
+        }
+        self.races = [{"date": (TODAY + timedelta(days=40)).isoformat(), "name": "Гонка",
+                       "distance_km": 21.1, "is_priority": 1}]
+
+    def test_override_lifts_recovery_keeps_reason(self):
+        wt, reason, vf, safety = self.b.determine_week_type(
+            self.metrics, [], self.races, feelings=[], past_races=[],
+            safety_override=True,
+        )
+        self.assertNotEqual(wt, "recovery")  # периодизация: build (гонка через 40 дн)
+        self.assertEqual(wt, "build")
+        self.assertIn("снят атлетом", reason)
+        self.assertIn("BB", safety)  # причина сигнала сохраняется для контекста LLM
+
+    def test_override_caps_volume_at_one(self):
+        _, _, vf, _ = self.b.determine_week_type(
+            self.metrics, [], self.races, feelings=[], past_races=[],
+            safety_override=True,
+        )
+        self.assertLessEqual(vf, 1.0)  # снятый флаг ≠ разрешение наращивать объём
+
+    def test_no_override_still_recovery(self):
+        wt, _, _, safety = self.b.determine_week_type(
+            self.metrics, [], self.races, feelings=[], past_races=[],
+        )
+        self.assertEqual(wt, "recovery")
+        self.assertIsNotNone(safety)
+
+    def test_override_without_signal_noop(self):
+        clean = dict(self.metrics, daily_trend_7d=[{"rhr": 50, "bb_max": 80}] * 7)
+        wt, reason, _, safety = self.b.determine_week_type(
+            clean, [], self.races, feelings=[], past_races=[], safety_override=True,
+        )
+        self.assertIsNone(safety)
+        self.assertNotIn("снят атлетом", reason)
 
 
 if __name__ == "__main__":

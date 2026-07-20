@@ -233,6 +233,7 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
         self._app.add_handler(CallbackQueryHandler(self.handle_fooddb_callback, pattern="^fdb:"))
         # Платежи (Telegram Payments / ЮKassa)
         self._app.add_handler(CallbackQueryHandler(self.handle_buy_callback, pattern="^buy:"))
+        self._app.add_handler(CallbackQueryHandler(self.handle_plan_safety_override, pattern="^plan_sfo:"))
         self._app.add_handler(PreCheckoutQueryHandler(self.handle_pre_checkout))
         self._app.add_handler(
             MessageHandler(filters.SUCCESSFUL_PAYMENT, self.handle_successful_payment)

@@ -10,6 +10,8 @@ import re
 from datetime import date, datetime, timedelta
 
 from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     Update,
 )
 from telegram.ext import ContextTypes
@@ -492,14 +494,17 @@ class ReportsMixin:
         self._storage.add_message(user_id, "assistant", analysis, source="workout")
 
     async def handle_plan(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        # Вызывается кнопкой «📅 План» И коллбеком снятия safety-ограничения,
+        # поэтому везде update.effective_message (у коллбека update.message нет).
         if not await self._gate(update, "coach"):
             return
         self._track_event(update, "plan")
         user_id = update.effective_user.id
+        msg = update.effective_message
 
         creds = self._storage.get_credentials(user_id)
         if not creds:
-            await update.message.reply_text(
+            await msg.reply_text(
                 "Сначала подключи Garmin: /link_garmin", reply_markup=MAIN_KEYBOARD
             )
             return
@@ -522,11 +527,11 @@ class ReportsMixin:
             if gen_date == today:
                 chunks = self._split(plan_text_cached)
                 for chunk in chunks:
-                    await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
+                    await msg.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
                 return
             # Cache is from a previous day — regenerate to pick up new workouts
 
-        status_msg = await update.message.reply_text("Анализирую данные и составляю план...")
+        status_msg = await msg.reply_text("Анализирую данные и составляю план...")
         stop = asyncio.Event()
         spinner = asyncio.create_task(self._animate(status_msg, stop, [
             "Определяю тип недели",
@@ -551,6 +556,8 @@ class ReportsMixin:
         busy.add(user_id)
 
         metrics = None
+        safety_reason: str | None = None
+        safety_override = False
         try:
             async with lock:
                 password = self._box.decrypt(creds.password_encrypted)
@@ -583,7 +590,9 @@ class ReportsMixin:
                 # Pass previous plan for continuity (even if stale — LLM sees what was planned)
                 prev_plan_row = self._storage.get_plan(user_id, week_start)
                 prev_plan = prev_plan_row[0] if prev_plan_row else ""
-                plan_text, week_type = await self._plan_builder.generate_plan(
+                athlete_prefs = self._storage.get_plan_preferences(user_id)
+                safety_override = self._storage.has_safety_override(user_id, week_start)
+                plan_text, week_type, safety_reason = await self._plan_builder.generate_plan(
                     user_id=user_id,
                     metrics=metrics or {"date": today.isoformat()},
                     history=history,
@@ -594,6 +603,8 @@ class ReportsMixin:
                     previous_plan=prev_plan,
                     past_races=past_races,
                     week_start=week_start_d,
+                    athlete_prefs=athlete_prefs,
+                    safety_override=safety_override,
                 )
                 # Неделя известна коду заранее — даты в тексте просто переписываем
                 from . import coach as _coach
@@ -616,17 +627,62 @@ class ReportsMixin:
         plan_text = self._strip_memory_tags(plan_text)
         chunks = self._split(plan_text)
         for chunk in chunks:
-            await update.message.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
+            await msg.reply_text(chunk, reply_markup=MAIN_KEYBOARD)
 
         # План — в историю диалога: QA-Claude должен видеть, что реально отправлено
         # (инцидент 12.07: «план 13–19 отправлен 👆» — которого не существовало)
         self._storage.add_message(user_id, "user", BTN_PLAN, source="plan")
         self._storage.add_message(user_id, "assistant", plan_text, source="plan")
 
+        # Hard-safety сработал и ещё не снят — информированное согласие атлета:
+        # кнопка снимает ограничение ТОЛЬКО на эту неделю (процесс от 20.07.2026)
+        if safety_reason and not safety_override:
+            await msg.reply_text(
+                "⚠️ План разгрузочный из-за сигнала перегруза:\n"
+                f"{safety_reason}\n\n"
+                "Если это твоя норма и ты берёшь риск на себя — можно построить "
+                "тренировочную неделю. Решение действует только на эту неделю.",
+                reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(
+                    "💪 Понимаю риск — строить тренировочную",
+                    callback_data=f"plan_sfo:{week_start}",
+                )]]),
+            )
+
         nudge_line = self._data_gap_footer(user_id, metrics, today)
         if nudge_line:
-            await update.message.reply_text(nudge_line, reply_markup=MAIN_KEYBOARD)
+            await msg.reply_text(nudge_line, reply_markup=MAIN_KEYBOARD)
             self._storage.add_message(user_id, "assistant", nudge_line, source="plan")
+
+    async def handle_plan_safety_override(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        """Атлет подтвердил снятие hard-safety: фиксируем согласие и перестраиваем план."""
+        query = update.callback_query
+        await query.answer()
+        user_id = update.effective_user.id
+        week_start = (query.data or "").split(":", 1)[-1]
+        try:
+            date.fromisoformat(week_start)
+        except ValueError:
+            await query.edit_message_text("Кнопка устарела — нажми 📅 План ещё раз.")
+            return
+        # Согласие фиксируем в БД (informed consent), кэш плана сбрасываем,
+        # чтобы handle_plan перегенерировал, а не вернул сегодняшний recovery
+        self._storage.save_safety_override(
+            user_id, week_start, reason="кнопка под планом"
+        )
+        self._storage.delete_plan(user_id, week_start)
+        with contextlib.suppress(Exception):
+            await query.edit_message_text(
+                f"✅ Ограничение на неделю с {week_start} снято под твою ответственность. "
+                "Строю тренировочный план…"
+            )
+        self._storage.add_message(
+            user_id, "user",
+            f"[Атлет снял safety-ограничение на неделю {week_start} — берёт риск на себя]",
+            source="plan",
+        )
+        await self.handle_plan(update, context)
 
     def _data_gap_footer(self, user_id: int, metrics: dict | None, today) -> str | None:
         """Одна подсказка о пробеле в данных (или None). Никогда не валит отчёт.
@@ -1039,7 +1095,7 @@ class ReportsMixin:
             tweak_note = f"\n[КОРРЕКТИРОВКА ПЛАНА от пользователя]: {tweak_request}"
             plan_memory = (user_memory + tweak_note).strip()
 
-            plan_text, week_type = await self._plan_builder.generate_plan(
+            plan_text, week_type, _safety_reason = await self._plan_builder.generate_plan(
                 user_id=user_id,
                 metrics=metrics,
                 history=history,
@@ -1049,6 +1105,8 @@ class ReportsMixin:
                 feelings=recent_feelings,
                 previous_plan=prev_plan,
                 week_start=week_start_d,
+                athlete_prefs=self._storage.get_plan_preferences(user_id),
+                safety_override=self._storage.has_safety_override(user_id, week_start),
             )
             from . import coach as _coach
             plan_text, n_fixes = _coach.fix_plan_dates(plan_text, date.fromisoformat(week_start))

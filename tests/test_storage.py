@@ -131,6 +131,39 @@ class TestPlans(StorageTestCase):
         meta = self.storage.get_plan_meta(UID, "2026-07-06")
         self.assertEqual(meta["week_type"], "build")
 
+    def test_delete_plan(self):
+        self.storage.save_plan(UID, "2026-07-20", "план", "recovery")
+        self.assertTrue(self.storage.delete_plan(UID, "2026-07-20"))
+        self.assertIsNone(self.storage.get_plan(UID, "2026-07-20"))
+        self.assertFalse(self.storage.delete_plan(UID, "2026-07-20"))
+
+
+class TestPlanPreferencesAndSafetyOverride(StorageTestCase):
+    """Процесс 20.07.2026: пожелания атлета + снятие hard-safety на неделю."""
+
+    def test_preferences_replace_and_clear(self):
+        self.assertEqual(self.storage.get_plan_preferences(UID), "")
+        self.storage.save_plan_preferences(UID, "интенсивные вт/чт, лонг вс")
+        self.assertEqual(self.storage.get_plan_preferences(UID), "интенсивные вт/чт, лонг вс")
+        self.storage.save_plan_preferences(UID, "объём 60 км")  # полная замена
+        self.assertEqual(self.storage.get_plan_preferences(UID), "объём 60 км")
+        self.storage.save_plan_preferences(UID, "  ")  # пустой текст = удаление
+        self.assertEqual(self.storage.get_plan_preferences(UID), "")
+
+    def test_preferences_per_user(self):
+        self.storage.save_plan_preferences(UID, "моё")
+        self.assertEqual(self.storage.get_plan_preferences(UID + 1), "")
+
+    def test_safety_override_per_week(self):
+        self.assertFalse(self.storage.has_safety_override(UID, "2026-07-20"))
+        self.storage.save_safety_override(UID, "2026-07-20", reason="кнопка")
+        self.assertTrue(self.storage.has_safety_override(UID, "2026-07-20"))
+        # действует ТОЛЬКО на подтверждённую неделю
+        self.assertFalse(self.storage.has_safety_override(UID, "2026-07-27"))
+        self.assertFalse(self.storage.has_safety_override(UID + 1, "2026-07-20"))
+        # повторное подтверждение не падает (idempotent)
+        self.storage.save_safety_override(UID, "2026-07-20", reason="ещё раз")
+
 
 class TestTokenUsage(StorageTestCase):
     def test_log_and_aggregate(self):

@@ -363,6 +363,11 @@ class FormattingMixin:
             if metrics.get("plan_week_type"):
                 pl.append(f"  (тип недели: {metrics['plan_week_type']})")
             parts.append("\n".join(pl))
+        if metrics.get("plan_prefs"):
+            parts.append(
+                "📌 ПОЖЕЛАНИЯ АТЛЕТА К ПЛАНАМ (сохранены, конвейер их учитывает): "
+                f"{metrics['plan_prefs']}"
+            )
 
         # Sleep (last night — may be today's date if wake-detected)
         sleep_data = metrics.get("sleep_last_night") or metrics.get("sleep")

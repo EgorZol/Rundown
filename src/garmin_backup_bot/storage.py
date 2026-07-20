@@ -357,6 +357,29 @@ class Storage:
                 )
                 """
             )
+            # Постоянные пожелания атлета к недельным планам (свободный текст,
+            # полная замена при каждом сохранении)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS plan_preferences (
+                    user_id INTEGER PRIMARY KEY,
+                    text TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            # Атлет осознанно снял hard-safety на конкретную неделю плана
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS safety_overrides (
+                    user_id INTEGER NOT NULL,
+                    week_start TEXT NOT NULL,
+                    reason TEXT,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (user_id, week_start)
+                )
+                """
+            )
 
     # ---------- подписки и платежи ----------
 
@@ -787,6 +810,57 @@ class Storage:
         """
         items = self.list_memory_items(user_id)
         return "\n".join(f"#{it['id']}. {it['content']}" for it in items)
+
+    def save_plan_preferences(self, user_id: int, text: str) -> None:
+        """Полная замена пожеланий к плану; пустой текст — удаление."""
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            if not text.strip():
+                conn.execute("DELETE FROM plan_preferences WHERE user_id = ?", (user_id,))
+                return
+            conn.execute(
+                """
+                INSERT INTO plan_preferences (user_id, text, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET text=excluded.text, updated_at=excluded.updated_at
+                """,
+                (user_id, text.strip(), now_iso),
+            )
+
+    def get_plan_preferences(self, user_id: int) -> str:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT text FROM plan_preferences WHERE user_id = ?", (user_id,)
+            ).fetchone()
+        return row[0] if row else ""
+
+    def save_safety_override(self, user_id: int, week_start: str, reason: str = "") -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO safety_overrides (user_id, week_start, reason, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(user_id, week_start) DO UPDATE SET reason=excluded.reason
+                """,
+                (user_id, week_start, reason, now_iso),
+            )
+
+    def has_safety_override(self, user_id: int, week_start: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM safety_overrides WHERE user_id = ? AND week_start = ?",
+                (user_id, week_start),
+            ).fetchone()
+        return row is not None
+
+    def delete_plan(self, user_id: int, week_start: str) -> bool:
+        """Сброс кэша плана недели (нужен при снятии safety-ограничения)."""
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM weekly_plans WHERE user_id = ? AND week_start = ?",
+                (user_id, week_start),
+            )
+        return cur.rowcount > 0
 
     def get_plan(self, user_id: int, week_start: str) -> tuple[str, str] | None:
         """Return (plan_text, generated_at_iso) or None."""
