@@ -59,10 +59,10 @@ def load_settings() -> Settings:
     anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if not anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is required")
-    anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-5").strip()
+    anthropic_model = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6").strip()
     anthropic_model_fallbacks_raw = os.getenv(
         "ANTHROPIC_MODEL_FALLBACKS",
-        "claude-sonnet-4-20250514",
+        "claude-sonnet-4-5",
     ).strip()
     anthropic_model_fallbacks = [
         model.strip()

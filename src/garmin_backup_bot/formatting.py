@@ -17,6 +17,28 @@ logger = logging.getLogger(__name__)
 
 
 class FormattingMixin:
+
+    @staticmethod
+    def _body_composition_line(metrics: dict) -> str | None:
+        """Строка состава тела с умных весов (Zepp → sync_body.py).
+
+        Показываем только осмысленные для бегуна поля; муть вроде «оценки тела»
+        и биоимпеданса остаётся в БД для SQL-запросов, но в контекст не идёт.
+        """
+        bc = metrics.get("body_composition")
+        if not bc or not bc.get("fat_pct"):
+            return None
+        bits = [f"жир {bc['fat_pct']:.1f}%"]
+        if bc.get("muscle_kg"):
+            bits.append(f"мышцы {bc['muscle_kg']:.1f} кг")
+        if bc.get("water_pct"):
+            bits.append(f"вода {bc['water_pct']:.1f}%")
+        if bc.get("visceral_fat"):
+            bits.append(f"висцеральный {bc['visceral_fat']:.0f}")
+        if bc.get("bmr_kcal"):
+            bits.append(f"BMR {bc['bmr_kcal']:.0f} ккал")
+        return f"СОСТАВ ТЕЛА ({bc.get('day', '?')}): " + ", ".join(bits)
+
     @staticmethod
     def _format_verified_facts_block(verified_facts: list[dict] | None) -> str:
         """Возвращает блок «ПОДТВЕРЖДЁННЫЕ ФАКТЫ» для системного промпта.
@@ -311,6 +333,8 @@ class FormattingMixin:
         weight = metrics.get("weight")
         if weight and weight.get("weight"):
             parts.append(f"ВЕС: {weight['weight']} кг ({weight.get('day', '?')})")
+        if (bc_line := self._body_composition_line(metrics)):
+            parts.append(bc_line)
 
         # Fitness metrics (CTL/ATL/TSB)
         fitness = metrics.get("fitness")
@@ -393,6 +417,8 @@ class FormattingMixin:
         weight = metrics.get("weight")
         if weight and weight.get("weight"):
             parts.append(f"ВЕС: {weight['weight']} кг ({weight.get('day', '?')})")
+        if (bc_line := self._body_composition_line(metrics)):
+            parts.append(bc_line)
 
         # Nutrition (yesterday) — relevant for recovery quality assessment
         food_yd = metrics.get("food_yesterday") or []

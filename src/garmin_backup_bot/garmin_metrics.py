@@ -57,6 +57,17 @@ class GarminMetricsMixin:
             row = conn.execute("SELECT * FROM weight WHERE weight IS NOT NULL ORDER BY day DESC LIMIT 1").fetchone()
             result["weight"] = dict(row) if row else None
 
+            # Состав тела с умных весов (таблица наполняется scaleconnect/sync_body.py).
+            # fat_pct = 0 — брак измерения (весы не сняли импеданс), не показываем.
+            try:
+                row = conn.execute(
+                    "SELECT * FROM body_composition WHERE fat_pct > 0 "
+                    "ORDER BY day DESC LIMIT 1"
+                ).fetchone()
+                result["body_composition"] = dict(row) if row else None
+            except sqlite3.OperationalError:
+                result["body_composition"] = None  # таблицы нет — весы не подключены
+
             # 7-day sleep history for trends
             week_ago = (target_date - timedelta(days=6)).isoformat()
             rows = conn.execute(
@@ -272,6 +283,27 @@ class GarminMetricsMixin:
                 (cutoff,),
             ).fetchall()
         return [{"day": r[0], "weight": r[1]} for r in rows]
+
+    def collect_body_composition_history(
+        self, user_id: int, days: int = 180
+    ) -> list[dict[str, Any]]:
+        """История состава тела с умных весов. Пустой список, если весов нет."""
+        garmin_db = self._garmin_db_path(user_id, "garmin.db")
+        if not garmin_db:
+            return []
+        cutoff = (date.today() - timedelta(days=days)).isoformat()
+        try:
+            with sqlite3.connect(garmin_db, timeout=5) as conn:
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute(
+                    "SELECT day, weight, fat_pct, muscle_kg, muscle_pct, water_pct, "
+                    "visceral_fat, bmr_kcal FROM body_composition "
+                    "WHERE day >= ? AND fat_pct > 0 ORDER BY day",
+                    (cutoff,),
+                ).fetchall()
+        except sqlite3.OperationalError:
+            return []
+        return [dict(r) for r in rows]
 
     def collect_personal_records(self, user_id: int) -> list[dict[str, Any]]:
         """Return best running performances at standard distances from activity data."""

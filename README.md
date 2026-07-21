@@ -1,237 +1,347 @@
 # Garmin Running Coach Bot
 
-**Telegram-бот «персональный AI-тренер по бегу»**. Несмотря на имя репозитория «garmin-analysis-and-backup», главная функция — AI-анализ данных с Garmin + генерация недельных планов тренировок + разбор питания (фото/голос/текст). Бэкап-часть осталась как побочная — синхронизация локальных SQLite через `GarminDB` и ZIP-экспорт в `exports/`.
+Telegram-бот **«персональный AI-тренер по бегу»**. Несмотря на имя репозитория `garmin-analysis-and-backup`, главная функция — анализ данных Garmin, недельные планы, Q&A и учёт питания. Локальный бэкап SQLite — побочная инфраструктура.
+
+**Версия:** 0.8.0 (см. `CHANGELOG.md`)  
+**Ветка:** `main`  
+**Правила для AI-агентов и разработки:** [`CLAUDE.md`](./CLAUDE.md) — актуальный playbook; этот README — обзор для людей.
+
+---
 
 ## TL;DR
 
-- Бот: long-polling, systemd-user сервис из venv
-- WebApp: FastAPI на :8085, контейнер `evg-garmin-webapp-1`, доступен через nginx на `https://aiaptechka.ru/garmin` (форма ввода Garmin creds)
-- AI: Claude (sonnet-4-6 + fallback sonnet-4-5) для анализа/Q&A, Claude Vision для еды, OpenAI Whisper для голоса
-- Данные: `data/app.db` (общая, 13 таблиц) + `data/users/{tg_id}/DBs/garmin*.db` (per-user, через GarminDB)
-- 2 активных пользователя, последние правки кода — сегодня (21 мая 2026)
+| | |
+|---|---|
+| **Бот** | long-polling, systemd user service из `.venv` |
+| **WebApp** | FastAPI `:8085` — форма Garmin credentials (`https://aiaptechka.ru/garmin`) |
+| **AI** | Claude (анализ / план / Q&A / Vision для еды), OpenAI Whisper (голос) |
+| **Garmin** | `garth` → JSON API (I/O-bound, 5–10 сек), **не** GarminDB CLI |
+| **Данные** | `data/app.db` + `data/users/{tg_id}/DBs/garmin*.db` |
+| **Dev** | `@Rundown_dev_bot`, `garmin-dev-bot.service`, данные в `data-dev/` |
+
+---
+
+## Возможности
+
+- **🌅 Утро** — синк health + activities, recovery-вердикт (код), утренний бриф (Claude)
+- **🏃 Разбор** — анализ последней тренировки (зоны, TE, сплиты, cardiac drift)
+- **📅 План** — недельный план с фазами recovery / base / build / peak / taper
+- **🏅 Форма / 📈 Прогресс / 📋 Итоги / 🏆 Рекорды** — сводки по метрикам
+- **🍽 Еда / 📊 Питание / 🔥 Калории** — фото, голос, текст; ISSN-нормы по типу дня
+- **🎯 Цель / 🏁 Старты** — цель + календарь гонок (A-гонка, приоритет, результаты)
+- **Q&A** — свободный текст с SQL-tools по трём БД + write-tools (факты, заметки, гонки…)
+- **Подписки** — тарифы «Тренер» / «Калории», триал 7 дней, ЮKassa (если задан токен)
+
+---
 
 ## Структура
 
 ```
 /home/evg/garmin-analysis-and-backup/
-├── Dockerfile.webapp           ← только webapp в контейнере (Python 3.12, uvicorn :8085)
-├── README.md / CLAUDE.md       ← этот файл + детальные правила для AI-агентов
-├── pyproject.toml / requirements.txt
-├── .env                        ← Telegram/Anthropic/OpenAI/Fernet ключи
-├── garmindb.log                ← лог GarminDB CLI
+├── README.md / CLAUDE.md / CHANGELOG.md
+├── pyproject.toml / requirements.txt / .env.example
+├── Dockerfile.webapp              # только webapp (uvicorn :8085)
+├── deploy/systemd/                # unit-файлы бота, webapp, бэкапа, dev-бота
+├── docs/garth-migration-spike.md  # история ухода с GarminDB
+├── scripts/
+│   ├── backup_app_db.sh           # ежедневный WAL-safe бэкап
+│   ├── broadcast.py / clean_user_memory.py / run_evals.py …
 ├── src/garmin_backup_bot/
-│   ├── bot.py            (~139 KB) ← Telegram handlers, клавиатура, awaiting-стейты
-│   ├── analyst.py        (~148 KB) ← Claude analysis, tool use для SQL по 3 БД
-│   ├── plan_builder.py   (~65 KB)  ← генерация недельных планов (recovery/base/build/peak/taper)
-│   ├── garmin_service.py (~49 KB)  ← синк с Garmin Connect через GarminDB CLI
-│   ├── storage.py        (~33 KB)  ← SQLite CRUD, 13 таблиц app.db
-│   ├── nutrition.py      (~26 KB)  ← Claude Vision еда, ISSN-нормы по типу дня
-│   ├── webapp.py         (~5 KB)   ← FastAPI форма /connect для Garmin creds
-│   ├── transcription.py            ← OpenAI Whisper voice→text
-│   ├── config.py / crypto.py / main.py / __init__.py
+│   ├── main.py              # сборка компонентов, polling
+│   ├── bot.py               # фасад GarminBot, регистрация хендлеров
+│   ├── bot_common.py        # кнопки BTN_*, MAIN_KEYBOARD
+│   ├── bot_food.py          # еда
+│   ├── bot_reports.py       # утро / разбор / план / форма / прогресс / итоги
+│   ├── bot_qa.py            # Q&A + write-tools
+│   ├── bot_races.py         # цель, старты, самочувствие
+│   ├── bot_profile.py       # анкета, TZ, сброс
+│   ├── bot_memory.py        # заметки
+│   ├── bot_jobs.py          # напоминания, алерты, /admin_stats
+│   ├── bot_payments.py      # тарифы, триал, пейволл, ЮKassa
+│   ├── coach.py             # детерминированные пороги и вердикты (без LLM)
+│   ├── analyst.py           # Claude: tool-цикл, analyze*/ask
+│   ├── formatting.py        # блоки контекста для промптов
+│   ├── prompts.py           # системные промпты
+│   ├── tools.py             # SQL-раннер (ro) + схемы tools
+│   ├── plan_builder.py      # генерация планов, макроцикл
+│   ├── garmin_service.py    # фасад
+│   ├── garmin_sync.py       # garth → SQLite
+│   ├── garmin_metrics.py    # чтение метрик
+│   ├── storage.py           # app.db CRUD, схема
+│   ├── nutrition.py         # Vision + ISSN
+│   ├── webapp.py / transcription.py / config.py / crypto.py
+├── tests/                   # unittest (coach, storage, tools, plan, …)
 ├── data/
-│   ├── app.db (~424 KB)        ← общая БД (creds, планы, еда, профили)
-│   ├── app.db-wal / -shm       ← WAL (≈4 MB, важно бэкапить вместе с .db)
-│   └── users/<tg_id>/DBs/      ← per-user Garmin SQLite (~149 MB у активного юзера)
-│       ├── garmin.db           ← sleep, HR, stress, weight, devices
-│       ├── garmin_activities.db ← activities, laps, records
-│       ├── garmin_summary.db   ← days/weeks/months/years summary
-│       └── garmin_monitoring.db ← минутные HR/RR/PulseOx/intensity
-├── exports/                    ← ZIP-выгрузки Garmin (~120 MB, не чистится)
-├── deploy/systemd/             ← unit-файлы (исходники)
-└── .venv/                      ← Python venv для systemd-сервиса бота
+│   ├── app.db               # общая БД бота
+│   ├── users/{tg_id}/       # per-user Garmin + JSON (splits/laps/HRV/…)
+│   │   └── DBs/             # реальные garmin.db / garmin_activities.db
+│   ├── backups/             # ежедневные бэкапы (см. backups/README-restore.md)
+│   └── archive/             # старые monitoring.db после миграции
+└── data-dev/                # изоляция dev-бота
 ```
+
+---
 
 ## Стек
 
-- **Python:** 3.12 (≥3.10 в pyproject)
-- **Бот:** `python-telegram-bot==21.10` (polling)
-- **WebApp:** FastAPI 0.115.6 + uvicorn 0.34.0
-- **AI:** Anthropic Claude (`claude-sonnet-4-6` основная + `claude-sonnet-4-5` fallback)
-- **Vision/Voice:** Claude Vision (еда), OpenAI Whisper (опционально)
-- **Garmin:** `GarminDB==3.6.7` + `garth` (хранит OAuth-токены, не пароли)
-- **БД:** SQLite (FTS не используется, WAL включён)
-- **Шифрование:** Fernet (`cryptography==44.0.0`) для Garmin-паролей
-- **Деплой:** Бот — `systemd --user`; WebApp — Docker Compose + nginx
+| Слой | Технология |
+|------|------------|
+| Python | 3.12 (≥3.10) |
+| Бот | `python-telegram-bot==21.10` (polling) |
+| WebApp | FastAPI + uvicorn |
+| AI | Anthropic Claude (основная + fallback-модели из `.env`) |
+| Голос | OpenAI Whisper (опционально) |
+| Garmin | **`garth`** (OAuth-сессия, JSON API) |
+| БД | SQLite, WAL |
+| Секреты | Fernet (`cryptography`) для Garmin-паролей |
+| Планировщик | APScheduler (периодические тики в боте) |
+| Деплой | systemd `--user` (бот, бэкап); Docker/nginx (webapp) |
 
-## ENV (`.env`)
+Зависимости: `requirements.txt`. Устаревший **GarminDB CLI для синка больше не используется** (остатки схем/полей в SQLite совместимы с историческими данными).
+
+---
+
+## Архитектура (коротко)
+
+```
+main.py
+  ├─ Storage(app.db)
+  ├─ GarminService = GarminSyncMixin + GarminMetricsMixin
+  ├─ HealthAnalyst  → Claude + SQL tools
+  ├─ WeeklyPlanBuilder
+  ├─ NutritionAnalyzer
+  ├─ Transcriber?
+  └─ GarminBot = Food + Reports + QA + Races + Profile + Memory + Jobs + Payments
+```
+
+**Принцип:** расчёты и пороги — в коде (`coach.py`), язык и тактика — у Claude.  
+**Синк:** только в «Утро» и «Спорт» (и онбординг). Глобальный семафор ≤5; первичный синк — строго 1. На каждый вызов — изолированный `garth.Client` (без гонки сессий).
+
+Подробности, анти-паттерны и чеклист после правок — в [`CLAUDE.md`](./CLAUDE.md).
+
+---
+
+## ENV
+
+Шаблон: `.env.example`. Секреты — только в `.env` / `.env.dev` (не в git).
 
 | Переменная | Назначение |
 |---|---|
-| `TELEGRAM_BOT_TOKEN` | токен бота от @BotFather |
-| `ENCRYPTION_KEY` | Fernet key (base64 32B). 🔴 **Потеря = все Garmin-пароли нерасшифруемы** |
-| `DB_PATH=./data/app.db` | общая БД |
-| `EXPORTS_DIR=./exports` | ZIP-архивы |
-| `GARMIN_WORKDIR_ROOT=./data/users` | per-user данные |
-| `WEBAPP_BASE_URL=https://aiaptechka.ru/garmin` | URL WebApp (для one-shot токенов) |
-| `WEBAPP_TOKEN_TTL_SECONDS=900` | TTL ссылки на форму |
-| `GARMIN_DB_SYNC_CMD` | `garmindb_cli.py --config {config_dir} -d -i -l` |
-| `GARMIN_START_DATE=2025-06-01` | горизонт истории |
-| `ADMIN_USER_IDS=123456789` | админы (Telegram user_id через запятую) |
-| `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_MODEL_FALLBACKS` | Claude |
-| `OPENAI_API_KEY` | для Whisper |
-| `USER_AGE`, `WEEKLY_KM_TARGET` | дефолты профиля |
+| `TELEGRAM_BOT_TOKEN` | токен бота |
+| `ENCRYPTION_KEY` | Fernet key. **Потеря = Garmin-пароли нерасшифруемы** |
+| `DB_PATH` | `./data/app.db` |
+| `EXPORTS_DIR` | `./exports` |
+| `GARMIN_WORKDIR_ROOT` | `./data/users` |
+| `WEBAPP_BASE_URL` | URL формы (для one-shot токенов) |
+| `WEBAPP_TOKEN_TTL_SECONDS` | TTL ссылки (по умолчанию 900) |
+| `ADMIN_USER_IDS` | Telegram user_id через запятую |
+| `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL` / `ANTHROPIC_MODEL_FALLBACKS` | Claude |
+| `OPENAI_API_KEY` | Whisper (опционально) |
+| `USER_TIMEZONE` | дефолт TZ (например `Europe/Moscow`) |
+| `GARMIN_DB_TIMEZONE` | TZ naive-дат в Garmin SQLite |
+| `USER_AGE` / `WEEKLY_KM_TARGET` | дефолты профиля |
+| `PAYMENT_PROVIDER_TOKEN` | ЮKassa через BotFather; пусто = «скоро» |
 
-## Схема БД (`data/app.db`)
+`GARMIN_DB_SYNC_CMD` в старых `.env` можно удалить — игнорируется.
 
-13 таблиц, источник истины — `storage.py:_init_schema()`. Текущие счётчики:
+Dev-бот: `.env` + `.env.dev` (перекрывает токен и пути данных).
 
-| Таблица | Строк | Назначение |
-|---|---:|---|
-| `conversation_messages` | 86 | История чатов с ботом |
-| `daily_feelings` | 1 | Ежедневное самочувствие |
-| `food_entries` | 88 | Записи о еде (фото/текст/голос) |
-| `garmin_credentials` | 2 | Зашифрованные Fernet-ом Garmin login/password |
-| `races` | 8 | Целевые гонки (поле `is_priority` — A-race флаг) |
-| `training_goal` | 1 | Глобальная цель |
-| `usage_events` | 1234 | События использования (для статистики) |
-| `user_memory` | 2 | "Помни/Забудь" |
-| `user_profile_overrides` | 2 | LTHR, timezone, опыт и т.п. |
-| `web_tokens` | 0 | One-shot токены для WebApp |
-| `weekly_plans` | 6 | Сгенерированные планы |
-| `daily_summaries_sent` | 0 | Анти-дубль для утренних сводок |
+---
 
-**Per-user Garmin БД** (для одного активного юзера ~149 MB):
-- `garmin.db` 28.6 MB — sleep (352), resting_hr (246), stress (349 350), daily_summary (352), weight (6)
-- `garmin_activities.db` 48.3 MB — activities (143), activity_laps (1234), activity_records (411 532)
-- `garmin_monitoring.db` 71.1 MB — monitoring (97 643), monitoring_hr (285 169), monitoring_rr (287 178), monitoring_pulse_ox (123 387)
+## Данные
 
-⚠️ Файлы `garmin.db`/`garmin_activities.db` могут быть и в корне юзера (0 байт stub), и в подпапке `DBs/`. **Реальные данные — в `DBs/`**.
+### `data/app.db` (источник схемы — `storage.py:_init_schema()`)
 
-## Хендлеры и команды бота
+Основные таблицы:
+
+| Таблица | Назначение |
+|---|---|
+| `garmin_credentials` | login + Fernet(password) |
+| `web_tokens` | one-shot токены WebApp |
+| `conversation_messages` | история диалогов |
+| `weekly_plans` | сгенерированные планы |
+| `training_goal` / `races` | цель и старты (`is_priority` = A-гонка) |
+| `user_profile_overrides` | вес, LTHR, TZ, дни бега, … |
+| `user_memory` / `user_memory_items` | долговременные заметки |
+| `verified_facts` | факты, подтверждённые атлетом |
+| `food_entries` | еда |
+| `daily_feelings` | самочувствие |
+| `subscriptions` / `payments` | тарифы и платежи |
+| `plan_preferences` | постоянные пожелания к планам |
+| `safety_overrides` | осознанное снятие hard-safety на неделю |
+| `token_usage` | учёт токенов Claude |
+| `usage_events` / `nudge_log` | аналитика и троттлинг подсказок |
+
+### Per-user Garmin (`data/users/{tg_id}/`)
+
+| Путь | Содержимое |
+|---|---|
+| `DBs/garmin.db` | sleep, resting_hr, daily_summary, weight, … |
+| `DBs/garmin_activities.db` | activities, laps, splits, steps_activities, … |
+| `config/garth_session` | OAuth-сессия garth |
+| `splits/`, `laps/`, `HRV/`, `Sleep/`, … | JSON-кэш деталей |
+| `CoachData/` | служебные метрики тренера |
+
+⚠️ Stub-файлы `garmin.db` в корне юзера могут быть пустыми — **реальные данные в `DBs/`**.
+
+### Бэкапы
+
+- Timer `garmin-backup-db.timer` → `scripts/backup_app_db.sh` (~03:00)
+- `data/backups/app-YYYY-MM-DD.db` + `users/…`, offsite rclone (см. `data/backups/README-restore.md`)
+
+---
+
+## Бот: команды и UI
 
 ### Команды
-`/start`, `/link_garmin`, `/status`, `/remember`, `/memory`, `/forget`, `/admin_stats`, `/plan`, `/feeling`, `/goal`, `/race`, `/race priority #N` / `/race unpriority #N` (пометить A-гонку), `/profile_reset`
 
-### Reply-кнопки (`MAIN_KEYBOARD`)
-Утро / Тренировка / План / Спорт / Цель / Самочувствие / Память / Статус / Питание / Старты / Прогресс / Итог недели / Рекорды / Вес / LTHR / Часовой пояс / Опыт / Профиль / Еда / Отчёт по еде
+`/start`, `/help`, `/link_garmin`, `/status`, `/remember`, `/memory`, `/forget`, `/plan`, `/feeling`, `/goal`, `/race`, `/profile_reset`, `/admin_stats`, `/paysupport` (и связанные с оплатой).
+
+### Reply-клавиатура (`MAIN_KEYBOARD`)
+
+```
+🌅 Утро     🏃 Разбор     🏅 Форма
+📅 План     📈 Прогресс   📋 Итоги
+🎯 Моя цель 🏁 Старты     🔥 Калории
+🍽 Еда      📊 Питание    🏆 Рекорды
+📊 Статус   📋 Профиль    🕐 Часы
+```
+
+Вес, LTHR, дни бега, заметки — через естественный язык / профиль / write-tools (отдельные кнопки убраны).
 
 ### Медиа
-- `filters.PHOTO` — Claude Vision еда
-- `filters.VOICE` — Whisper → нормализованный текст
-- `filters.StatusUpdate.WEB_APP_DATA` — данные из WebApp формы
-- `filters.TEXT & ~filters.COMMAND` → `handle_question` — Claude Q&A с tool-use SQL по 3 БД (`query_health_db`, `query_activities_db`, `query_app_db`)
 
-### Awaiting-стейты
-`context.user_data["awaiting"]` ∈ {food, food_edit, weight, lthr, timezone, profile, ...} — переключает интерпретацию следующего сообщения.
+- **Фото** → распознавание еды (Claude Vision)
+- **Голос** → Whisper → тот же пайплайн, что текст
+- **WebApp data** → сохранение Garmin credentials
+- **Текст** → Q&A (`handle_question`) с tool-use
 
-### WebApp FastAPI (`webapp.py`, порт 8085)
-- `GET /healthz` → "ok"
-- `GET /connect?token=…` → HTML-форма (one-shot токен TTL 900 сек)
-- `POST /submit` → Fernet-шифрование пароля → `garmin_credentials` upsert
+### WebApp (`webapp.py`)
 
-## Запуск / эксплуатация
+- `GET /healthz`
+- `GET /connect?token=…` — HTML-форма
+- `POST /submit` — encrypt + upsert credentials (rate-limit, лимит тела)
 
-### Бот (systemd-user)
+---
+
+## Тренерская логика (важно)
+
+### HR-зоны Garmin (5-zone)
+
+**Z3 = аэробная, основная зона лёгкого бега** (не Z2).  
+Z1 warmup → Z2 light → **Z3 aerobic** → Z4 threshold → Z5 anaerobic.
+
+### Макроцикл (`plan_builder.py`)
+
+Окна фаз масштабируются по дистанции A-гонки:
+
+| Дистанция | taper | peak | build |
+|---|---:|---:|---:|
+| <10К | 5 | 14 | 28 |
+| 10К | 7 | 21 | 42 |
+| 21К | 10 | 24 | 49 |
+| 42–50К | 14 | 28 | 56 |
+| 80К+ | 21 | 42 | 84 |
+
+Выбор A-гонки: `is_priority` → ближайшая non-tune-up → каскад на более длинную в 14 днях.  
+Hard-safety (RHR-spike, низкий BB, HRV, ACWR, TSB) **override** race-логику; атлет может осознанно снять ограничение на неделю (`safety_overrides`).
+
+### Питание
+
+ISSN-нормы периодизированы по 6 типам дня: rest → easy → steady → threshold → long → race.  
+Тип дня — из строки плана; fallback — `calories_active` из Garmin.
+
+### 80/20 по сессиям
+
+Считает код (`coach.run_is_intensive`): Z4+Z5 доминируют (>50%) **или** аэробный TE ≥ 4 **или** анаэробный TE ≥ 2. Не «на глаз» в промпте.
+
+---
+
+## Эксплуатация
+
+### Прод-бот
+
 ```bash
-systemctl --user start garmin-backup-bot.service
-systemctl --user stop garmin-backup-bot.service
-systemctl --user restart garmin-backup-bot.service
+systemctl --user start|stop|restart garmin-backup-bot.service
 systemctl --user status garmin-backup-bot.service
 journalctl --user -u garmin-backup-bot -f
 ```
 
-Unit: `~/.config/systemd/user/garmin-backup-bot.service` (исходник в `deploy/systemd/`). ExecStart: `/home/evg/garmin-analysis-and-backup/.venv/bin/python -m garmin_backup_bot.main`.
+Unit: `deploy/systemd/garmin-backup-bot.service`  
+`WorkingDirectory=/home/evg/garmin-analysis-and-backup`  
+`ExecStart=…/.venv/bin/python -m garmin_backup_bot.main`
 
-### WebApp (docker)
+### Dev-бот (ручной, обычно выключен)
+
 ```bash
-# часть моно-compose /home/evg/docker-compose.yml (сервис garmin-webapp)
-docker logs evg-garmin-webapp-1 --tail 50
-docker compose -f /home/evg/docker-compose.yml restart garmin-webapp
+systemctl --user start garmin-dev-bot.service   # @Rundown_dev_bot, data-dev/
+# … проверка хендлеров …
+systemctl --user stop garmin-dev-bot.service
 ```
 
-### Синтаксис после правок
+### WebApp
+
+Docker-образ `Dockerfile.webapp` (uvicorn `:8085`); снаружи — nginx `aiaptechka.ru/garmin`.  
+Исходник unit: `deploy/systemd/garmin-backup-webapp.service` (может быть не активен, если compose/nginx ведёт контейнер отдельно).
+
+### После правок кода
+
 ```bash
-python3 -c "import ast; ast.parse(open('src/garmin_backup_bot/bot.py').read())"
+# синтаксис
+python3 -c "import ast; ast.parse(open('src/garmin_backup_bot/FILE.py').read())"
+
+# тесты (обязательно перед коммитом)
+.venv/bin/python -m unittest discover tests -q
+
+# прод
+systemctl --user restart garmin-backup-bot.service
 ```
 
-## Макроцикл и выбор A-гонки (plan_builder.py)
+Pre-commit hook: `.githooks/pre-commit` (`git config core.hooksPath .githooks`).  
+CI: `.github/workflows/tests.yml`.
 
-Окна фаз — **масштабируются по дистанции**, а не прибиты как для марафона:
-
-| Дистанция | taper | peak | build |
-|---|---:|---:|---:|
-| <10К | 5 дн | 14 дн | 28 дн |
-| 10К | 7 | 21 | 42 |
-| 21К полумарафон | 10 | 24 | 49 |
-| 42К марафон / 50К | 14 | 28 | 56 |
-| 80К+ ультра | 21 | 42 | 84 |
-
-**Выбор целевой гонки** (`_select_target_race`):
-1. `is_priority=1` (помечена `/race priority #N`) → без ограничения горизонтом, юзер сам выбрал A-гонку
-2. иначе — ближайшая non-tune-up в 56 дн. Tune-up детектится по notes: «бежать легко», «с женой», «тест формы», «tune-up»
-3. **каскад**: если в 14 дн после ближайшей есть гонка ≥ её дистанции — целимся на ту (типичный паттерн «лёгкая 10К как подводка к 50К через неделю»)
-
-В календаре `🏁 Старты` приоритетная отмечается ⭐ и показывает свой `#ID`.
-
-Hard-safety сигналы (RHR-spike, BB <50 ≥2дн, HRV UNBALANCED, ACWR >1.5, TSB <-25) **override** макроцикл — всегда recovery.
-
-## ISSN-нормы и тип тренировочного дня
-
-`nutrition.py:classify_training_day(plan_line, active_calories)` определяет 6 уровней:
-- rest / easy / steady / threshold / long / race
-
-Под каждый уровень — свои нормы калорий/углеводов/белков/жиров от веса (`calculate_issn_targets`). Не статические — периодизированы по типу дня.
-
-Тип определяется из строки плана на сегодня; fallback — `calories_active` из Garmin.
-
-Если `calories_total < 1400` — данные расхода неполные, показывается предупреждение.
+---
 
 ## Footguns
 
-0. **Tool-use схемы должны соответствовать реальной БД.** Описания `query_health_db`/`query_activities_db` в `analyst.py` — это контракт для Claude. Если там написано `heart_rate`, а в БД `hr` — Claude не получит ошибку в виде «no such column», только обобщённое «запрос не выполнен» (по аудиту) → начнёт галлюцинировать. Сверять с PRAGMA TABLE_INFO при правках.
+1. **Tool-описания SQL ↔ реальные колонки БД.** Рассинхрон → Claude «молча» ломает запросы и галлюцинирует. Сверять с `PRAGMA table_info`.
+2. **Синк только в Утро/Спорт** (и онбординг). Не тащить в еду/статус/Q&A.
+3. **WAL:** копировать `app.db` через `sqlite3 … ".backup"` / `scripts/backup_app_db.sh`, не `cp` без `-wal`/`-shm`.
+4. **Реальные Garmin-данные** — в `data/users/{id}/DBs/`, не stub в корне юзера.
+5. **HR-зоны:** Z3 = easy aerobic, не Z2.
+6. **`.get(key) or default`**, не `.get(key, default)` для nullable.
+7. **`.env` с секретами.** Бэкап `ENCRYPTION_KEY` — в `data/backups/encryption-key.enc` (см. restore README).
+8. **Длинные ответы Telegram:** `self._split()` (лимит ~4000).
+9. **Имя репозитория** ≠ продукт: это AI-тренер, не «утилита бэкапа».
 
+---
 
+## Безопасность (кратко)
 
-1. **Garmin sync — тяжёлая операция (2–3 мин).** Вызывать ТОЛЬКО в хендлерах «Утро» и «Спорт». CLAUDE.md прямо запрещает в других местах. Иначе бот зависает на минуты.
-2. **Пароли в открытом виде на момент синка.** `GarminConnectConfig.json` пишется с расшифрованным паролем и удаляется после. Если процесс упал — может остаться на диске.
-3. **WAL не флашится при копировании.** При копировании `app.db` без `.db-wal`/`-shm` теряются последние записи. Бэкап делать через `sqlite3 app.db ".backup app.db.bak"` или `VACUUM INTO`.
-4. **Per-user БД растут быстро.** У одного юзера `garmin_monitoring.db` уже 71 MB за <1 год. Ротации нет.
-5. **Stub-файлы в `data/users/{id}/`.** Реальные данные — в `DBs/`, не в корне юзера.
-6. **HR-зоны Garmin 5-zone.** Z3 = аэробная (лёгкий бег), НЕ Z2. CLAUDE.md явно предупреждает.
-7. **`.get(key, default)` vs `.get(key) or default`.** Если ключ есть со значением `None`, первое вернёт `None`. Использовать `or default`.
-8. **`.env` содержит реальные секреты.** Telegram, Anthropic, OpenAI keys, Fernet encryption key. Резервного бэкапа Fernet-ключа нет.
-9. **`exports/` не очищается** — 120 MB ZIP-архивов с февраля 2026.
-10. **WebApp container не имеет прямого порт-mapping.** Рассчитывает на nginx из `shared_proxy` external network. Прямой curl с хоста не достучится.
-11. **Anthropic API fallback chain.** Если ретайрят `sonnet-4-6` — fallback на `sonnet-4-5`. Если retire оба — править `.env`. Дефолт в `config.py` — `claude-sonnet-4-20250514` (устаревший).
-12. **Имя проекта вводит в заблуждение.** `garmin-analysis-and-backup` — но реально это AI-тренер по бегу.
+- SQL-tools Claude: `mode=ro`, только SELECT; `query_app_db` — in-memory срез **своего** `user_id`; credentials/tokens не отдаются.
+- Garmin-пароли: Fernet at rest; email в логах маскируется.
+- WebApp: one-shot токены, rate-limit, лимит тела.
+- Ошибки SQLite пользователю/модели — обобщённые; детали в journal.
 
-## Аудит безопасности (2026-05-22)
+Исторический аудит (2026-05) и последующие фиксы — в старых разделах CHANGELOG / git history.
 
-Проведён аудит, найдено 14 проблем. Статус:
+---
 
-| # | Серьёзность | Проблема | Статус |
-|---|---|---|---|
-| 1 | 🔴 | SQL-инструмент Claude: БД на запись + `PRAGMA writable_schema` проходил гард | ✅ БД открываются `mode=ro`, гард — только `SELECT` + `PRAGMA TABLE_*` |
-| 2 | 🔴 | Нет изоляции юзеров в общей `app.db` через SQL-инструмент | ✅ `query_app_db` бьёт по in-memory копии только со строками своего `user_id`; `garmin_credentials`/`web_tokens` не копируются |
-| 3 | 🔴 | Плейнтекст-пароль в `GarminConnectConfig.json` не чистился при краше sync | ✅ `try/finally` вокруг `subprocess.run` в `run_backup` и `_run_sync` |
-| 4 | 🟡 | WebApp `/submit`: нет rate-limit и лимита размера тела | ✅ rate-limit 20/60с по IP, лимит тела 64 KB, `max_length` на полях |
-| 5 | 🟡 | Несогласованная проверка владельца токена `/submit` vs Telegram-путь | ⚠️ принято: токен 192-бит, риск низкий |
-| 6 | 🟡 | Email Garmin (PII) в `journalctl` | ✅ `_mask_email()` — логируется `f***@domain` |
-| 7 | 🟡 | `int(parts[2])` в callback-хендлерах падал на подделанной callback-data | ✅ безопасный парс `arg_id` в `handle_fooddb_callback` |
-| 8 | 🟡 | Тексты ошибок SQLite уходили в контекст модели (разведка схемы) | ✅ обобщённое сообщение, детали — в лог |
-| 9 | 🟢 | WebApp бинд `0.0.0.0:8085` | ⚠️ не проблема: порт контейнера не опубликован на хост |
-| 10 | 🟢 | `PRAGMA journal_mode=WAL` на каждом коннекте | ⚠️ принято: no-op стоимостью микросекунды |
-| 11 | 🟢 | `consume_web_token` неатомарен (double-spend) | ✅ один `DELETE … RETURNING` |
-| 12 | 🟢 | Текст исключения уходил юзеру в `ask()` | ✅ обобщённое сообщение |
-| 13 | 🟢 | Стрей-файл `=1.30.0` в корне | ✅ удалён |
-| 14 | 🟢 | Хрупкий парс `ADMIN_USER_IDS` | ✅ `try/except`, невалидный id не роняет старт |
+## MCP (локально на сервере)
 
-Не входило в аудит, но замечено: бот-токен светится в httpx-логах (`journalctl --user -u garmin-backup-bot`) на INFO — как было в Ksucha. Лечится `logging.getLogger("httpx").setLevel(logging.WARNING)`.
+`/home/evg/garmin-mcp-sqlite.py` — read-only SQL к `app.db` и Garmin-БД выбранного юзера (для агентов/отладки). Не часть runtime бота.
 
-## Масштабирование / производительность
+---
 
-Первый Garmin-синк нового юзера CPU-тяжёлый (GarminDB парсит FIT-файлы) — на 2-ядерном VPS вешал сервер.
+## Полезные ссылки в репо
 
-**Сделано (костыль, 2026-05-22):**
-- garmindb-процесс запускается с `nice -n19 ionice -c3` — не голодает бота и соседние сервисы (`garmin_service.py:_nice_prefix`)
-- Глобальный семафор `_global_sync_sem` в `bot.py` — только один синк во всём боте одновременно, остальные ждут в очереди
-
-**Настоящее решение (спланировано):** уход от GarminDB на Garmin Connect JSON API через `garth` — см. `docs/garth-migration-spike.md`. Убирает CPU-парсинг, делает синк I/O-bound и масштабируемым.
-
-## Полезное
-- Детальные правила работы с кодом: `CLAUDE.md`
-- Спайк миграции синка: `docs/garth-migration-spike.md`
-- Источник истины схемы: `storage.py:_init_schema()`
-- ISSN-нормы: `nutrition.py:calculate_issn_targets()`
-- Системные промпты Claude: `analyst.py`, `plan_builder.py`, `nutrition.py`
+| Файл | Зачем |
+|------|--------|
+| [`CLAUDE.md`](./CLAUDE.md) | Правила разработки, паттерны, деплой-чеклист |
+| [`CHANGELOG.md`](./CHANGELOG.md) | История релизов (SemVer light) |
+| [`docs/garth-migration-spike.md`](./docs/garth-migration-spike.md) | Миграция GarminDB → garth |
+| [`data/backups/README-restore.md`](./data/backups/README-restore.md) | Восстановление с бэкапа / offsite |
+| `storage.py:_init_schema()` | Схема app.db |
+| `coach.py` | Пороги recovery, 80/20, факты |
+| `plan_builder.py` | Фазы, A-гонка, формат плана |
+| `nutrition.py` | ISSN, классификация дня |
