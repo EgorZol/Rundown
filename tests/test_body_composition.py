@@ -18,8 +18,8 @@ from garmin_backup_bot.formatting import FormattingMixin  # noqa: E402
 
 FULL = {
     "day": "2026-07-21", "weight": 89.3, "fat_pct": 26.618885,
-    "muscle_kg": 55.53, "muscle_pct": 62.18824, "water_pct": 50.339443,
-    "visceral_fat": 12.0, "bmr_kcal": 1744.0,
+    "muscle_kg": 62.18824, "muscle_pct": 69.64, "water_pct": 50.339443,
+    "bone_kg": 3.3410983, "visceral_fat": 12.0, "bmr_kcal": 1744.0,
 }
 
 
@@ -28,7 +28,7 @@ class TestBodyCompositionLine(unittest.TestCase):
         line = FormattingMixin._body_composition_line({"body_composition": FULL})
         self.assertIn("2026-07-21", line)
         self.assertIn("жир 26.6%", line)
-        self.assertIn("мышцы 55.5 кг", line)
+        self.assertIn("мышцы 62.2 кг", line)
         self.assertIn("вода 50.3%", line)
         self.assertIn("BMR 1744 ккал", line)
 
@@ -42,6 +42,17 @@ class TestBodyCompositionLine(unittest.TestCase):
         broken = dict(FULL, fat_pct=0.0)
         self.assertIsNone(
             FormattingMixin._body_composition_line({"body_composition": broken}))
+
+    def test_components_sum_to_weight(self):
+        """Мышцы + жир + кости = полный вес.
+
+        Поле Zepp называется muscleRate, но содержит КИЛОГРАММЫ — если
+        прочитать его как процент, из баланса пропадает ~7 кг.
+        """
+        total = (FULL["muscle_kg"]
+                 + FULL["weight"] * FULL["fat_pct"] / 100
+                 + FULL["bone_kg"])
+        self.assertAlmostEqual(total, FULL["weight"], delta=0.1)
 
     def test_partial_record(self):
         # старые записи содержат только вес и жир — не падаем
