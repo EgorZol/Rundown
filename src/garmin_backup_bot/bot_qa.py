@@ -34,6 +34,10 @@ class QAMixin:
 
         # Handle awaiting input for timezone (вес/LTHR/стаж — словами через set_* tools)
         awaiting = context.user_data.pop("awaiting", None)
+        if awaiting == "scale_code":
+            await self.handle_scale_code(update, context)
+            return
+
         if awaiting == "timezone":
             tz_name = question.strip()
             try:

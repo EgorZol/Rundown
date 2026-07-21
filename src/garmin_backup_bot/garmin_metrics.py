@@ -284,6 +284,50 @@ class GarminMetricsMixin:
             ).fetchall()
         return [{"day": r[0], "weight": r[1]} for r in rows]
 
+    def store_scale_records(self, user_id: int, records: list[dict]) -> int:
+        """Записывает измерения с умных весов в per-user БД. Возвращает число дат.
+
+        Пишем в две таблицы: body_composition (полная запись) и weight (чтобы
+        «последний вес» в отчётах обновлялся тем же путём, что и у Garmin).
+        На одну дату может быть несколько взвешиваний — берём последнее.
+        """
+        garmin_db = self._garmin_db_path(user_id, "garmin.db")
+        if not garmin_db or not records:
+            return 0
+        by_day: dict[str, dict] = {}
+        for rec in records:
+            day = rec.get("day")
+            if not day:
+                continue
+            prev = by_day.get(day)
+            if not prev or (rec.get("measured_at") or "") > (prev.get("measured_at") or ""):
+                by_day[day] = rec
+
+        cols = ("day", "measured_at", "weight", "bmi", "fat_pct", "water_pct",
+                "muscle_pct", "muscle_kg", "bone_kg", "protein_pct",
+                "visceral_fat", "bmr_kcal", "body_score", "body_age", "impedance")
+        with sqlite3.connect(garmin_db, timeout=5) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS body_composition (
+                    day DATE PRIMARY KEY, measured_at TEXT, weight FLOAT, bmi FLOAT,
+                    fat_pct FLOAT, water_pct FLOAT, muscle_pct FLOAT, muscle_kg FLOAT,
+                    bone_kg FLOAT, protein_pct FLOAT, visceral_fat FLOAT,
+                    bmr_kcal FLOAT, body_score FLOAT, body_age FLOAT, impedance FLOAT
+                )
+                """
+            )
+            conn.executemany(
+                f"INSERT OR REPLACE INTO body_composition ({','.join(cols)}) "
+                f"VALUES ({','.join('?' * len(cols))})",
+                [tuple(r.get(c) for c in cols) for r in by_day.values()],
+            )
+            conn.executemany(
+                "INSERT OR REPLACE INTO weight (day, weight) VALUES (?, ?)",
+                [(r["day"], r["weight"]) for r in by_day.values() if r.get("weight")],
+            )
+        return len(by_day)
+
     def collect_body_composition_history(
         self, user_id: int, days: int = 180
     ) -> list[dict[str, Any]]:

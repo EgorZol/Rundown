@@ -139,6 +139,26 @@ class ProfileMixin:
         else:
             lines.append("\n✅ Профиль заполнен! Чтобы изменить — /profile_reset")
             await update.message.reply_text("\n".join(lines), reply_markup=MAIN_KEYBOARD)
+        await self._send_scale_status(update, user_id)
+
+    async def _send_scale_status(self, update, user_id: int) -> None:
+        """Блок про умные весы с кнопкой подключения/отключения."""
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        creds = self._storage.get_scale_credentials(user_id)
+        if creds:
+            last = (creds.get("last_sync_at") or "")[:10] or "—"
+            text = f"⚖️ Умные весы: подключены (последний синк {last})"
+            if creds.get("last_error"):
+                text += "\n⚠️ Последний синк не прошёл — возможно, нужно переподключить."
+            kb = [[InlineKeyboardButton("Отключить весы", callback_data="scale_off")],
+                  [InlineKeyboardButton("Переподключить", callback_data="scale_connect")]]
+        else:
+            text = ("⚖️ Умные весы не подключены.\n"
+                    "Если у тебя весы Xiaomi/Amazfit — могу забирать вес и состав "
+                    "тела автоматически.")
+            kb = [[InlineKeyboardButton("Подключить весы", callback_data="scale_connect")]]
+        await update.effective_message.reply_text(
+            text, reply_markup=InlineKeyboardMarkup(kb))
 
     async def handle_profile_reset(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not await self._gate(update, "coach"):

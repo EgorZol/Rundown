@@ -357,6 +357,21 @@ class Storage:
                 )
                 """
             )
+            # Умные весы: токен Zepp (шифрован Fernet). Пароль от Xiaomi НЕ
+            # хранится — юзер авторизуется сам в браузере, см. zepp_scale.py
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS scale_credentials (
+                    user_id INTEGER PRIMARY KEY,
+                    provider TEXT NOT NULL,
+                    zepp_user_id TEXT NOT NULL,
+                    token_encrypted TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    last_sync_at TEXT,
+                    last_error TEXT
+                )
+                """
+            )
             # Постоянные пожелания атлета к недельным планам (свободный текст,
             # полная замена при каждом сохранении)
             conn.execute(
@@ -810,6 +825,56 @@ class Storage:
         """
         items = self.list_memory_items(user_id)
         return "\n".join(f"#{it['id']}. {it['content']}" for it in items)
+
+    # ---------- умные весы ----------
+
+    def save_scale_credentials(
+        self, user_id: int, zepp_user_id: str, token_encrypted: str,
+        provider: str = "zepp",
+    ) -> None:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO scale_credentials
+                    (user_id, provider, zepp_user_id, token_encrypted, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    provider=excluded.provider,
+                    zepp_user_id=excluded.zepp_user_id,
+                    token_encrypted=excluded.token_encrypted,
+                    last_error=NULL
+                """,
+                (user_id, provider, zepp_user_id, token_encrypted, now_iso),
+            )
+
+    def get_scale_credentials(self, user_id: int) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT provider, zepp_user_id, token_encrypted, created_at, "
+                "last_sync_at, last_error FROM scale_credentials WHERE user_id = ?",
+                (user_id,),
+            ).fetchone()
+        if not row:
+            return None
+        return {"provider": row[0], "zepp_user_id": row[1], "token_encrypted": row[2],
+                "created_at": row[3], "last_sync_at": row[4], "last_error": row[5]}
+
+    def delete_scale_credentials(self, user_id: int) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute("DELETE FROM scale_credentials WHERE user_id = ?", (user_id,))
+        return cur.rowcount > 0
+
+    def mark_scale_sync(self, user_id: int, error: str | None = None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE scale_credentials SET last_sync_at = ?, last_error = ? WHERE user_id = ?",
+                (datetime.now(timezone.utc).isoformat(), error, user_id),
+            )
+
+    def get_scale_user_ids(self) -> list[int]:
+        with self._connect() as conn:
+            return [r[0] for r in conn.execute("SELECT user_id FROM scale_credentials")]
 
     def save_plan_preferences(self, user_id: int, text: str) -> None:
         """Полная замена пожеланий к плану; пустой текст — удаление."""

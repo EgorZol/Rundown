@@ -60,6 +60,7 @@ from .bot_food import FoodMixin
 from .bot_jobs import JobsMixin
 from .bot_memory import MemoryMixin
 from .bot_payments import PaymentsMixin
+from .bot_scale import ScaleMixin
 from .bot_profile import ProfileMixin
 from .bot_qa import QAMixin
 from .bot_races import RacesMixin
@@ -68,7 +69,7 @@ from .bot_reports import ReportsMixin
 logger = logging.getLogger(__name__)
 
 
-class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, QAMixin, JobsMixin, PaymentsMixin):
+class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, QAMixin, JobsMixin, PaymentsMixin, ScaleMixin):
     _MAX_MSG_LEN = 4000
 
     def __init__(
@@ -234,6 +235,8 @@ class GarminBot(FoodMixin, RacesMixin, MemoryMixin, ProfileMixin, ReportsMixin, 
         # Платежи (Telegram Payments / ЮKassa)
         self._app.add_handler(CallbackQueryHandler(self.handle_buy_callback, pattern="^buy:"))
         self._app.add_handler(CallbackQueryHandler(self.handle_plan_safety_override, pattern="^plan_sfo:"))
+        self._app.add_handler(CallbackQueryHandler(self.handle_scale_connect, pattern="^scale_connect$"))
+        self._app.add_handler(CallbackQueryHandler(self.handle_scale_disconnect, pattern="^scale_off$"))
         self._app.add_handler(PreCheckoutQueryHandler(self.handle_pre_checkout))
         self._app.add_handler(
             MessageHandler(filters.SUCCESSFUL_PAYMENT, self.handle_successful_payment)

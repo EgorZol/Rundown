@@ -45,6 +45,9 @@ class JobsMixin:
                 # 09:00–09:14 window → проверка «тихой деградации» синка
                 if hh == 9 and mm < 15:
                     await self._sync_health_check_for_user(user_id, context)
+                # 05:30–05:44 — весы: до утреннего отчёта, данные уже свежие
+                if hh == 5 and 30 <= mm < 45:
+                    await self._scale_sync_for_user(user_id, context)
             except Exception as exc:
                 logger.debug("Periodic tick failed for user %d: %s", user_id, exc)
 
